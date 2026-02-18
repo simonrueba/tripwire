@@ -1,0 +1,14 @@
+triggers:
+  - "src/types/**"
+  - "src/engine/validator.ts"
+  - "src/mcp/tools/**"
+
+context: |
+  This project uses Zod v4 (installed as zod@4.x).
+  Import from "zod/v4", NOT from "zod".
+  Example: import { z } from "zod/v4";
+
+severity: warning
+created_by: human
+tags:
+  - dependencies

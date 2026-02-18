@@ -5,6 +5,7 @@ import { checkAction } from "./commands/check.js";
 import { listAction } from "./commands/list.js";
 import { lintAction } from "./commands/lint.js";
 import { statsAction } from "./commands/stats.js";
+import { doctorAction } from "./commands/doctor.js";
 
 export function createProgram(): Command {
   const program = new Command()
@@ -49,6 +50,12 @@ export function createProgram(): Command {
     .description("Show tripwire coverage and statistics")
     .option("--json", "Output as JSON")
     .action(statsAction);
+
+  program
+    .command("doctor")
+    .description("Check that Tripwire enforcement is properly configured")
+    .option("--json", "Output as JSON")
+    .action(doctorAction);
 
   return program;
 }

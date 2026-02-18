@@ -71,7 +71,7 @@ severity: critical
       expect(result.fullContent).toContain('<<<TRIPWIRE severity="critical" name="secrets">>>');
       expect(result.fullContent).toContain("Never hardcode secrets.");
       expect(result.fullContent).toContain("<<<END_TRIPWIRE>>>");
-      expect(result.fullContent).toContain("---");
+      expect(result.fullContent).toContain("<<<TRIPWIRE_FILE_CONTENT>>>");
       expect(result.fullContent).toContain('const api = process.env.STRIPE_KEY;');
     });
 

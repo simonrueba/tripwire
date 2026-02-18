@@ -1,15 +1,26 @@
 {
-  "name": "tripwire",
+  "name": "@simonrueba/tripwire",
   "version": "0.1.0",
   "description": "Context injection for AI agents, triggered by the codebase itself",
   "type": "module",
   "bin": {
     "tripwire": "./dist/cli.js"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./dist/index.js",
-    "./engine": "./dist/engine/index.js",
-    "./server": "./dist/server.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./engine": {
+      "types": "./dist/engine/index.d.ts",
+      "default": "./dist/engine/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
   },
   "files": [
     "dist"
@@ -30,6 +41,17 @@
     "agent"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simonrueba/tripwire.git"
+  },
+  "bugs": {
+    "url": "https://github.com/simonrueba/tripwire/issues"
+  },
+  "homepage": "https://github.com/simonrueba/tripwire#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "commander": "^14.0.3",
