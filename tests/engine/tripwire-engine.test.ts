@@ -1,0 +1,258 @@
+import { describe, it, expect } from "vitest";
+import { TripwireEngine } from "../../src/engine/tripwire-engine.js";
+import { InMemoryFileSystem } from "../helpers.js";
+
+function createEngine(files: Record<string, string>) {
+  const fs = new InMemoryFileSystem(files);
+  return new TripwireEngine({ projectRoot: "/project", fs });
+}
+
+describe("TripwireEngine", () => {
+  describe("checkPath", () => {
+    it("returns matches for a file", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/auth.yml": `
+triggers:
+  - "src/auth/**"
+context: "Use session auth."
+severity: high
+`,
+      });
+
+      const matches = await engine.checkPath("src/auth/login.ts");
+
+      expect(matches).toHaveLength(1);
+      expect(matches[0].tripwire.name).toBe("auth");
+      expect(matches[0].tripwire.severity).toBe("high");
+    });
+
+    it("returns empty for non-matching paths", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/auth.yml": `
+triggers:
+  - "src/auth/**"
+context: "Use session auth."
+`,
+      });
+
+      const matches = await engine.checkPath("src/api/routes.ts");
+      expect(matches).toHaveLength(0);
+    });
+
+    it("excludes paths in exclude_paths", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/all.yml": `
+triggers:
+  - "**"
+context: "Everything"
+`,
+      });
+
+      const matches = await engine.checkPath("node_modules/foo/bar.js");
+      expect(matches).toHaveLength(0);
+    });
+  });
+
+  describe("readFileWithContext", () => {
+    it("prepends context to file content", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/secrets.yml": `
+triggers:
+  - "payments/**"
+context: "Never hardcode secrets."
+severity: critical
+`,
+        "/project/payments/stripe.ts": 'const api = process.env.STRIPE_KEY;',
+      });
+
+      const result = await engine.readFileWithContext("payments/stripe.ts");
+
+      expect(result.matches).toHaveLength(1);
+      expect(result.fullContent).toContain("[TRIPWIRE:critical] secrets");
+      expect(result.fullContent).toContain("Never hardcode secrets.");
+      expect(result.fullContent).toContain("---");
+      expect(result.fullContent).toContain('const api = process.env.STRIPE_KEY;');
+    });
+
+    it("returns plain content when no tripwires match", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/auth.yml": `
+triggers:
+  - "src/auth/**"
+context: "Auth context"
+`,
+        "/project/README.md": "# Hello",
+      });
+
+      const result = await engine.readFileWithContext("README.md");
+
+      expect(result.matches).toHaveLength(0);
+      expect(result.fullContent).toBe("# Hello");
+      expect(result.injectedContext).toBe("");
+    });
+
+    it("throws on missing file", async () => {
+      const engine = createEngine({});
+
+      await expect(engine.readFileWithContext("nonexistent.ts"))
+        .rejects.toThrow("File not found");
+    });
+  });
+
+  describe("createTripwire", () => {
+    it("creates a new tripwire YAML file", async () => {
+      const fs = new InMemoryFileSystem({});
+      const engine = new TripwireEngine({ projectRoot: "/project", fs });
+
+      const result = await engine.createTripwire("no-raw-sql", {
+        triggers: ["src/models/**"],
+        context: "Use the ORM, not raw SQL.",
+        severity: "high",
+        tags: ["security"],
+      });
+
+      expect(result.tripwire.name).toBe("no-raw-sql");
+      expect(result.filePath).toContain("no-raw-sql.yml");
+
+      // Verify file was written
+      const content = fs.getFile("/project/.tripwires/no-raw-sql.yml");
+      expect(content).toBeDefined();
+      expect(content).toContain("src/models/**");
+    });
+
+    it("rejects agent-created tripwires when disabled", async () => {
+      const fs = new InMemoryFileSystem({});
+      const engine = new TripwireEngine({
+        projectRoot: "/project",
+        fs,
+        config: { allow_agent_create: false },
+      });
+
+      await expect(
+        engine.createTripwire("test", {
+          triggers: ["**"],
+          context: "test",
+          created_by: "agent",
+        }),
+      ).rejects.toThrow("disabled");
+    });
+  });
+
+  describe("deactivateTripwire", () => {
+    it("sets active: false in the YAML", async () => {
+      const fs = new InMemoryFileSystem({
+        "/project/.tripwires/old.yml": `
+triggers:
+  - "src/**"
+context: "Old context"
+`,
+      });
+      const engine = new TripwireEngine({ projectRoot: "/project", fs });
+
+      await engine.deactivateTripwire("old");
+
+      const content = fs.getFile("/project/.tripwires/old.yml");
+      expect(content).toContain("active: false");
+    });
+
+    it("throws for nonexistent tripwire", async () => {
+      const engine = createEngine({});
+
+      await expect(engine.deactivateTripwire("ghost"))
+        .rejects.toThrow("not found");
+    });
+  });
+
+  describe("listTripwires", () => {
+    it("lists all active tripwires", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/a.yml": `
+triggers: ["src/a/**"]
+context: "A"
+tags: ["security"]
+`,
+        "/project/.tripwires/b.yml": `
+triggers: ["src/b/**"]
+context: "B"
+severity: critical
+`,
+      });
+
+      const list = await engine.listTripwires();
+      expect(list).toHaveLength(2);
+    });
+
+    it("filters by tag", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/a.yml": `
+triggers: ["src/**"]
+context: "A"
+tags: ["security"]
+`,
+        "/project/.tripwires/b.yml": `
+triggers: ["src/**"]
+context: "B"
+tags: ["other"]
+`,
+      });
+
+      const list = await engine.listTripwires({ tag: "security" });
+      expect(list).toHaveLength(1);
+      expect(list[0].name).toBe("a");
+    });
+
+    it("filters by severity", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/low.yml": `
+triggers: ["src/**"]
+context: "Low"
+severity: info
+`,
+        "/project/.tripwires/high.yml": `
+triggers: ["src/**"]
+context: "High"
+severity: critical
+`,
+      });
+
+      const list = await engine.listTripwires({ severity: "critical" });
+      expect(list).toHaveLength(1);
+      expect(list[0].name).toBe("high");
+    });
+  });
+
+  describe("lint", () => {
+    it("returns no issues for valid tripwires", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/valid.yml": `
+triggers:
+  - "src/**"
+context: "Valid"
+`,
+      });
+
+      const results = await engine.lint();
+      expect(results).toHaveLength(0);
+    });
+
+    it("reports invalid YAML", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/broken.yml": `{{not yaml`,
+      });
+
+      const results = await engine.lint();
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].level).toBe("error");
+    });
+
+    it("warns when directory does not exist", async () => {
+      const fs = new InMemoryFileSystem({});
+      const engine = new TripwireEngine({ projectRoot: "/empty", fs });
+
+      const results = await engine.lint();
+      expect(results).toHaveLength(1);
+      expect(results[0].level).toBe("warning");
+      expect(results[0].message).toContain("does not exist");
+    });
+  });
+});
