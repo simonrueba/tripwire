@@ -30,14 +30,16 @@ No external services. No databases. No setup beyond starting the server.
 ## Installation
 
 ```bash
-npm install -g tripwire
+npm install -g @tripwire-dev/mcp
 ```
 
 Or add to your project locally:
 
 ```bash
-npm install --save-dev tripwire
+npm install --save-dev @tripwire-dev/mcp
 ```
+
+> **Note:** Package name TBD before publish. Using `@tripwire-dev/mcp` as placeholder.
 
 ### Connect to your editor
 
@@ -148,6 +150,12 @@ Tripwire uses standard glob syntax:
 | `src/api/v{1,2}/**` | Files in v1 or v2 API directories |
 | `!**/*.test.ts` | Exclude test files (prefix with `!`) |
 
+### Naming conventions
+
+**Tripwire names** are derived from the YAML filename and normalized to `a-z`, `0-9`, and hyphens. Spaces and underscores become hyphens. Names are case-insensitive — `No_Raw_SQL.yml` becomes `no-raw-sql`. `tripwire lint` checks for duplicate names.
+
+**Tags** are a comma-separated list. Commas are not allowed inside a tag name. When rendered in injection headers: `tags="security,architecture"`.
+
 ---
 
 ## MCP Tools
@@ -166,11 +174,15 @@ The auth module uses session-based auth, NOT JWT.
 See ADR-012 for the migration rationale.
 <<<END_TRIPWIRE>>>
 
----
+<<<TRIPWIRE_FILE_CONTENT>>>
 <actual file contents>
 ```
 
-Context is injected using structured delimiters (`<<<TRIPWIRE>>>` / `<<<END_TRIPWIRE>>>`) for reliable LLM parsing. When tripwires are suppressed due to `max_context_length`, a `<<<TRIPWIRE_SUPPRESSED>>>` block lists what was dropped.
+**Injection format:** Context is wrapped in structured delimiters (`<<<TRIPWIRE>>>` / `<<<END_TRIPWIRE>>>`) for reliable LLM parsing. File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel that cannot appear naturally in code. When tripwires are suppressed due to `max_context_length`, a `<<<TRIPWIRE_SUPPRESSED>>>` block lists exactly what was dropped.
+
+**Injection modes:**
+- `prepend` (default) — context + sentinel + file content in a single response. Universal compatibility; works even when clients flatten multi-block tool outputs.
+- `metadata` — context and file content returned as separate response blocks. Cleaner separation but relies on the client preserving block boundaries.
 
 ### `create_tripwire`
 
@@ -249,7 +261,7 @@ Optional `.tripwirerc.yml` in project root:
 ```yaml
 # Injection behavior
 inject_mode: prepend          # prepend | metadata  (metadata = structured, not inline)
-separator: "\n---\n"          # Separator between injected context and file content
+separator: "\n<<<TRIPWIRE_FILE_CONTENT>>>\n"   # Sentinel between context and file content
 max_context_length: 2000      # Truncate injected context beyond this (chars)
 
 # Agent authoring

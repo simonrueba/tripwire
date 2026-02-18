@@ -188,8 +188,9 @@ export class TripwireEngine {
       );
     }
 
+    const normalized = normalizeName(name);
     const validated = TripwireSchema.parse(data);
-    const fileName = `${name}.yml`;
+    const fileName = `${normalized}.yml`;
     const filePath = path.join(this.tripwiresDir, fileName);
 
     // Build YAML content (omit defaults for cleaner files)
@@ -214,7 +215,7 @@ export class TripwireEngine {
     await this.fs.writeFile(filePath, yamlContent);
     this.invalidateCache();
 
-    const tripwireFile: TripwireFile = { ...validated, name, filePath };
+    const tripwireFile: TripwireFile = { ...validated, name: normalized, filePath };
     return { filePath, tripwire: tripwireFile };
   }
 
@@ -287,6 +288,7 @@ export class TripwireEngine {
     }
 
     const ymlFiles = await this.fs.glob("*.yml", { cwd: this.tripwiresDir });
+    const seenNames = new Set<string>();
 
     for (const fileName of ymlFiles) {
       const filePath = path.join(this.tripwiresDir, fileName);
@@ -334,6 +336,13 @@ export class TripwireEngine {
       if (tripwire.triggers.length === 0) {
         results.push({ file: fileName, level: "error", message: "No trigger patterns defined" });
       }
+
+      // Check for duplicate names (case-insensitive)
+      const canonicalName = path.basename(fileName, ".yml").toLowerCase();
+      if (seenNames.has(canonicalName)) {
+        results.push({ file: fileName, level: "error", message: `Duplicate tripwire name: ${canonicalName}` });
+      }
+      seenNames.add(canonicalName);
     }
 
     return results;
@@ -409,4 +418,17 @@ export class TripwireEngine {
   private isExcluded(relativePath: string): boolean {
     return matchPath(relativePath, this.config.exclude_paths).matches;
   }
+}
+
+/**
+ * Normalize a tripwire name to a canonical form: lowercase, a-z0-9 and hyphens only.
+ * Spaces and underscores become hyphens. Consecutive hyphens collapsed.
+ */
+function normalizeName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-|-$/g, "");
 }
