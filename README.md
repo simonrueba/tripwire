@@ -160,11 +160,17 @@ Drop-in replacement for standard file reading. Checks tripwires and prepends mat
 
 ```
 Agent calls: read_file("src/auth/login.ts")
-Returns:     [TRIPWIRE:high] auth-session-based (security)
-             The auth module uses session-based auth...
-             ---
-             <actual file contents>
+Returns:
+<<<TRIPWIRE severity="high" name="auth-session-based" tags="security">>>
+The auth module uses session-based auth, NOT JWT.
+See ADR-012 for the migration rationale.
+<<<END_TRIPWIRE>>>
+
+---
+<actual file contents>
 ```
+
+Context is injected using structured delimiters (`<<<TRIPWIRE>>>` / `<<<END_TRIPWIRE>>>`) for reliable LLM parsing. When tripwires are suppressed due to `max_context_length`, a `<<<TRIPWIRE_SUPPRESSED>>>` block lists what was dropped.
 
 ### `create_tripwire`
 

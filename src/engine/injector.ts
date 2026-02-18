@@ -1,4 +1,4 @@
-import { SEVERITY_ORDER, type MatchResult } from "../types/tripwire.js";
+import { SEVERITY_ORDER, type MatchResult, type TripwireFile } from "../types/tripwire.js";
 
 export interface InjectorOptions {
   separator: string;
@@ -25,12 +25,16 @@ export function formatContext(
   const blocks: string[] = [];
   let totalLength = 0;
   let omitted = 0;
+  const suppressed: string[] = [];
 
   for (const match of sorted) {
     const block = formatTripwireBlock(match);
 
     if (options.maxLength > 0 && totalLength + block.length > options.maxLength) {
       omitted = sorted.length - blocks.length;
+      for (let i = blocks.length; i < sorted.length; i++) {
+        suppressed.push(`${sorted[i].tripwire.name} (${sorted[i].tripwire.severity})`);
+      }
       break;
     }
 
@@ -51,7 +55,9 @@ export function formatContext(
   let result = blocks.join("\n");
 
   if (omitted > 0) {
-    result += `\n[TRIPWIRE] ... and ${omitted} more tripwire(s) omitted (increase max_context_length)`;
+    result += `\n<<<TRIPWIRE_SUPPRESSED count="${omitted}" reason="context_budget">>>\n`;
+    result += `Suppressed: ${suppressed.join(", ")}\n`;
+    result += `<<<END_TRIPWIRE_SUPPRESSED>>>`;
   }
 
   return result;
@@ -71,13 +77,15 @@ export function injectContext(
 
 function formatTripwireBlock(match: MatchResult): string {
   const { tripwire } = match;
-  const tags = tripwire.tags.length > 0 ? ` (${tripwire.tags.join(", ")})` : "";
-  const header = `[TRIPWIRE:${tripwire.severity}] ${tripwire.name}${tags}`;
-  return `${header}\n${tripwire.context.trim()}\n`;
+  const tags = tripwire.tags.length > 0 ? ` tags="${tripwire.tags.join(",")}"` : "";
+  const header = `<<<TRIPWIRE severity="${tripwire.severity}" name="${tripwire.name}"${tags}>>>`;
+  const footer = "<<<END_TRIPWIRE>>>";
+  return `${header}\n${tripwire.context.trim()}\n${footer}\n`;
 }
 
-function formatDependencyBlock(parentName: string, dep: import("../types/tripwire.js").TripwireFile): string {
-  const tags = dep.tags.length > 0 ? ` (${dep.tags.join(", ")})` : "";
-  const header = `[TRIPWIRE:${dep.severity}] ${parentName}/dep: ${dep.name}${tags}`;
-  return `${header}\n${dep.context.trim()}\n`;
+function formatDependencyBlock(parentName: string, dep: TripwireFile): string {
+  const tags = dep.tags.length > 0 ? ` tags="${dep.tags.join(",")}"` : "";
+  const header = `<<<TRIPWIRE severity="${dep.severity}" name="${parentName}/dep:${dep.name}"${tags}>>>`;
+  const footer = "<<<END_TRIPWIRE>>>";
+  return `${header}\n${dep.context.trim()}\n${footer}\n`;
 }
