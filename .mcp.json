@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tripwire": {
+      "command": "node",
+      "args": ["dist/cli.js", "serve", "--project", "."]
+    }
+  }
+}

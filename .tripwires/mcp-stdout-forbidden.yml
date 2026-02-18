@@ -1,0 +1,15 @@
+triggers:
+  - "src/mcp/**"
+  - "src/server.ts"
+
+context: |
+  CRITICAL: This is an MCP server using stdio transport.
+  NEVER use console.log() — stdout is the JSON-RPC protocol stream.
+  All logging MUST use console.error() (stderr).
+  A single console.log() will corrupt the protocol and crash the connection.
+
+severity: critical
+created_by: human
+tags:
+  - mcp
+  - protocol

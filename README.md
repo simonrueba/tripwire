@@ -30,16 +30,16 @@ No external services. No databases. No setup beyond starting the server.
 ## Installation
 
 ```bash
-npm install -g @tripwire-dev/mcp
+npm install -g @simonrueba/tripwire
 ```
 
 Or add to your project locally:
 
 ```bash
-npm install --save-dev @tripwire-dev/mcp
+npm install --save-dev @simonrueba/tripwire
 ```
 
-> **Note:** Package name TBD before publish. Using `@tripwire-dev/mcp` as placeholder.
+Requires **Node.js >= 18**.
 
 ### Connect to your editor
 
@@ -48,16 +48,18 @@ npm install --save-dev @tripwire-dev/mcp
 {
   "mcpServers": {
     "tripwire": {
-      "command": "tripwire",
-      "args": ["serve", "--project", "."]
+      "command": "npx",
+      "args": ["@simonrueba/tripwire", "serve", "--project", "."]
     }
   }
 }
 ```
 
-**Cursor** — add to `.cursor/mcp.json` with the same config.
+**Cursor** — add to `.cursor/mcp.json` with the same config. Note: Cursor does not support PreToolUse hooks, so enforcement requires agents to choose the Tripwire tool (see [Cursor Strategy](#cursor-strategy)).
 
 **Any MCP-compatible client** — Tripwire speaks standard MCP over stdio.
+
+For a complete working setup, see [`examples/hello-tripwire/`](examples/hello-tripwire/).
 
 ---
 
@@ -221,6 +223,7 @@ tripwire check <filepath>                            # Show which tripwires matc
 tripwire list [--tag <tag>] [--severity <level>]     # List all tripwires
 tripwire lint [--strict] [--prune]                   # Validate all tripwire YAML files
 tripwire stats [--json]                              # Show tripwire coverage and statistics
+tripwire doctor [--json]                             # Check enforcement setup
 ```
 
 ---
@@ -235,6 +238,8 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 2. Developer reviews in PR — accepts, edits, or rejects the tripwire
 3. Merged tripwires propagate to the whole team on next pull
 4. Expired tripwires get cleaned up with `tripwire lint --prune`
+
+**Security note:** Tripwires influence agent behavior. Treat them like code — review them in PRs, don't auto-merge agent-authored tripwires, and be especially careful with `critical` severity since it shapes how agents interact with sensitive modules.
 
 ### `.gitattributes` (optional)
 
@@ -269,12 +274,91 @@ allow_agent_create: true      # Let agents create tripwires via MCP
 require_learned_from: true    # Agents must explain what mistake prompted the tripwire
 auto_expire_days: 90          # Default expiry for agent-authored tripwires
 
+# Enforcement (Claude Code hooks)
+enforcement_mode: strict      # strict = deny raw reads | advisory = allow with warning
+
 # Filtering
 exclude_paths:                # Never check tripwires for these paths
   - "node_modules/**"
   - "dist/**"
   - ".git/**"
 ```
+
+### Config defaults
+
+| Key | Type | Default | Notes |
+|---|---|---|---|
+| `inject_mode` | `"prepend"` \| `"metadata"` | `"prepend"` | metadata returns context and content as separate blocks |
+| `separator` | string | `\n<<<TRIPWIRE_FILE_CONTENT>>>\n` | sentinel between context and file content |
+| `max_context_length` | number | `0` (unlimited) | whole-tripwire truncation — never cuts mid-block |
+| `allow_agent_create` | boolean | `true` | set `false` to block agent-authored tripwires |
+| `require_learned_from` | boolean | `true` | agents must explain the mistake |
+| `auto_expire_days` | number | `90` | 0 = no auto-expiry |
+| `enforcement_mode` | `"strict"` \| `"advisory"` | `"strict"` | advisory allows raw reads with a warning |
+| `exclude_paths` | string[] | `["node_modules/**", "dist/**", ".git/**"]` | never check tripwires for these |
+| `tripwires_dir` | string | `".tripwires"` | directory containing YAML files |
+| `max_dependency_depth` | number | `5` | max depth for `depends_on` chain resolution |
+
+Unknown keys are silently ignored. Use `tripwire lint --strict` to catch config issues.
+
+---
+
+## Enforcement (Claude Code Hooks)
+
+Without enforcement, an agent *can* bypass Tripwire by using the built-in `Read` tool instead of `mcp__tripwire__read_file`. A PreToolUse hook closes this gap by blocking raw reads and redirecting them through Tripwire.
+
+> **Compatibility:** Enforcement hooks are currently **Claude Code-specific**. Cursor and other MCP clients will need their own mechanism to redirect reads. The MCP server itself is universal — only the enforcement layer is editor-specific.
+
+### Setup
+
+Tripwire ships with a ready-made hook. Copy both files into your project:
+
+```
+.claude/
+  settings.json                  # Hook config: intercepts Read calls
+  hooks/
+    enforce-tripwire-read.mjs    # Denies raw reads, suggests tripwire read_file
+```
+
+No external dependencies required — the hook is pure Node.js.
+
+### How it works
+
+1. Agent calls `Read` (or `mcp__filesystem__read_file`) for a project file
+2. Hook resolves the real path via `realpath` (prevents symlink/traversal bypass)
+3. Hook verifies `.tripwires/` exists and `.mcp.json` has a `"tripwire"` server configured
+4. If both conditions are met and the file isn't in an excluded directory, the hook denies the read
+5. The deny message tells the agent the exact tool name and argument shape to use instead
+6. Agent retries with `mcp__tripwire__read_file` — context is injected automatically
+
+**Safety valves:**
+- If `.tripwires/` doesn't exist, the hook does nothing (not a Tripwire project)
+- If `.mcp.json` doesn't have a `"tripwire"` server, the hook allows the read (agent has no alternative — prevents loops)
+- If the deny message includes: "If Tripwire MCP is not available, run: `tripwire doctor`"
+
+**Excluded directories** (always allowed through `Read`): `.git/`, `node_modules/`, `dist/`, `.tripwires/`, `.claude/`.
+
+### Enforcement modes
+
+Set in `.tripwirerc.yml`:
+
+| Mode | Behavior | Use case |
+|---|---|---|
+| `strict` (default) | Deny raw reads, force Tripwire | Production, established teams |
+| `advisory` | Allow raw reads with a warning | Progressive adoption, evaluation |
+
+### Verify
+
+```bash
+tripwire doctor
+```
+
+Checks all components and prints `ENFORCEMENT: ON`, `PARTIAL`, or `OFF` with actionable fix instructions.
+
+### Important notes
+
+- The MCP server key in `.mcp.json` **must** be `"tripwire"` so the tool name resolves to `mcp__tripwire__read_file`
+- Enforcement is optional but strongly recommended — without it, Tripwire relies on the agent choosing the right tool
 
 ---
 
@@ -354,11 +438,38 @@ tags: [temporary, compliance]
 
 ---
 
+## Troubleshooting
+
+Run `tripwire doctor` first — it checks all components and tells you exactly what's wrong.
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| No context injected | Agent used `Read` instead of `mcp__tripwire__read_file` | Enable enforcement hooks (see [Enforcement](#enforcement-claude-code-hooks)) |
+| Context injected but hook not blocking | `.claude/settings.json` missing or wrong matcher | Run `tripwire doctor`, check hook config |
+| Agent stuck in deny loop | Tripwire MCP server not loaded | Verify `.mcp.json` has `"tripwire"` key, restart session |
+| `tripwire doctor` shows FAIL on MCP | `.mcp.json` missing or wrong server key | Server key **must** be `"tripwire"` (not `"tw"`, not `"tripwire-mcp"`) |
+| Hook not firing at all | Settings file not loaded | Restart Claude Code session after creating `.claude/settings.json` |
+| Works in Claude Code, not in Cursor | Cursor has no PreToolUse hooks | See [Cursor Strategy](#cursor-strategy) |
+
+---
+
+## Cursor Strategy
+
+Tripwire's MCP server works in Cursor — agents can call `read_file`, `list_tripwires`, etc. The difference is **enforcement**: Cursor does not support PreToolUse hooks, so there's no way to block raw filesystem reads.
+
+**Current behavior (v1):** Tripwire works when agents explicitly use Tripwire tools. No automatic enforcement.
+
+**Workaround:** Configure Tripwire as the **only** filesystem-capable MCP server. If no other server provides `read_file`, agents must use Tripwire's version.
+
+**Roadmap:** Tripwire as a full filesystem proxy — implement the minimal set of FS tools (`read`, `list`, `stat`, `search`) with injection on reads. This makes Tripwire the filesystem server with policies, eliminating bypass regardless of client.
+
+---
+
 ## Roadmap
 
+- [ ] **Filesystem proxy mode** — serve read/list/stat/search tools so Tripwire is the only FS provider
 - [ ] **Stale detection** — flag tripwires whose triggered files have changed significantly since creation
 - [ ] **Firing analytics** — track which tripwires fire most, which never fire (candidates for removal)
-- [ ] **Cascading tripwires** — tripwire A fires → also inject tripwire B
 - [ ] **Semantic matching** — match on file content/intent, not just path globs
 - [ ] **Editor integration** — show tripwire indicators in VS Code gutter
 - [ ] **`tripwire suggest`** — analyze git blame and PR comments to propose tripwires automatically

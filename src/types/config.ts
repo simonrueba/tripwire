@@ -10,6 +10,7 @@ export const TripwireConfigSchema = z.object({
   exclude_paths: z.array(z.string()).default(["node_modules/**", "dist/**", ".git/**"]),
   tripwires_dir: z.string().default(".tripwires"),
   max_dependency_depth: z.number().int().min(1).max(10).default(5),
+  enforcement_mode: z.enum(["strict", "advisory"]).default("strict"),
 });
 
 export type TripwireConfig = z.infer<typeof TripwireConfigSchema>;

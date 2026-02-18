@@ -1,0 +1,13 @@
+triggers:
+  - "src/engine/**"
+
+context: |
+  Engine modules must NEVER import from node:fs or perform direct I/O.
+  All filesystem access goes through the IFileSystem interface injected
+  via constructor. This enables testing with InMemoryFileSystem.
+  Import IFileSystem from ../io/fs-adapter.js if you need file access.
+
+severity: high
+created_by: human
+tags:
+  - architecture

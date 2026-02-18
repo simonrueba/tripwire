@@ -1,5 +1,5 @@
 {
-  "name": "tripwire",
+  "name": "@simonrueba/tripwire",
   "version": "0.1.0",
   "description": "Context injection for AI agents, triggered by the codebase itself",
   "type": "module",
@@ -30,6 +30,9 @@
     "agent"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "commander": "^14.0.3",
