@@ -68,8 +68,9 @@ severity: critical
       const result = await engine.readFileWithContext("payments/stripe.ts");
 
       expect(result.matches).toHaveLength(1);
-      expect(result.fullContent).toContain("[TRIPWIRE:critical] secrets");
+      expect(result.fullContent).toContain('<<<TRIPWIRE severity="critical" name="secrets">>>');
       expect(result.fullContent).toContain("Never hardcode secrets.");
+      expect(result.fullContent).toContain("<<<END_TRIPWIRE>>>");
       expect(result.fullContent).toContain("---");
       expect(result.fullContent).toContain('const api = process.env.STRIPE_KEY;');
     });

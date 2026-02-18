@@ -25,12 +25,21 @@ function makeMatch(tripwire: TripwireFile, deps: TripwireFile[] = []): MatchResu
 }
 
 describe("formatContext", () => {
-  it("formats a single match", () => {
+  it("formats with structured delimiters", () => {
     const tw = makeTripwire({ name: "auth", severity: "high", context: "Use sessions.", tags: ["security"] });
     const result = formatContext([makeMatch(tw)], { separator: "\n---\n", maxLength: 0 });
 
-    expect(result).toContain("[TRIPWIRE:high] auth (security)");
+    expect(result).toContain('<<<TRIPWIRE severity="high" name="auth" tags="security">>>');
     expect(result).toContain("Use sessions.");
+    expect(result).toContain("<<<END_TRIPWIRE>>>");
+  });
+
+  it("omits tags attribute when empty", () => {
+    const tw = makeTripwire({ name: "auth", severity: "high", context: "Use sessions." });
+    const result = formatContext([makeMatch(tw)], { separator: "\n---\n", maxLength: 0 });
+
+    expect(result).toContain('<<<TRIPWIRE severity="high" name="auth">>>');
+    expect(result).not.toContain("tags=");
   });
 
   it("sorts by severity (critical first)", () => {
@@ -42,8 +51,8 @@ describe("formatContext", () => {
       { separator: "\n---\n", maxLength: 0 },
     );
 
-    const criticalPos = result.indexOf("[TRIPWIRE:critical]");
-    const infoPos = result.indexOf("[TRIPWIRE:info]");
+    const criticalPos = result.indexOf('severity="critical"');
+    const infoPos = result.indexOf('severity="info"');
     expect(criticalPos).toBeLessThan(infoPos);
   });
 
@@ -56,23 +65,25 @@ describe("formatContext", () => {
       { separator: "\n---\n", maxLength: 0 },
     );
 
-    const alphaPos = result.indexOf("alpha");
-    const betaPos = result.indexOf("beta");
+    const alphaPos = result.indexOf('"alpha"');
+    const betaPos = result.indexOf('"beta"');
     expect(alphaPos).toBeLessThan(betaPos);
   });
 
-  it("truncates at whole-tripwire granularity", () => {
+  it("truncates at whole-tripwire granularity with suppression details", () => {
     const tw1 = makeTripwire({ name: "short", severity: "critical", context: "Short." });
     const tw2 = makeTripwire({ name: "long", severity: "warning", context: "A".repeat(100) });
 
     const result = formatContext(
       [makeMatch(tw1), makeMatch(tw2)],
-      { separator: "\n---\n", maxLength: 50 },
+      { separator: "\n---\n", maxLength: 80 },
     );
 
-    expect(result).toContain("[TRIPWIRE:critical] short");
-    expect(result).toContain("1 more tripwire(s) omitted");
-    expect(result).not.toContain("long");
+    expect(result).toContain('name="short"');
+    expect(result).toContain("<<<TRIPWIRE_SUPPRESSED");
+    expect(result).toContain('count="1"');
+    expect(result).toContain("long (warning)");
+    expect(result).toContain("<<<END_TRIPWIRE_SUPPRESSED>>>");
   });
 
   it("returns empty string for no matches", () => {
@@ -80,7 +91,7 @@ describe("formatContext", () => {
     expect(result).toBe("");
   });
 
-  it("includes dependency context", () => {
+  it("includes dependency context with structured markers", () => {
     const dep = makeTripwire({ name: "redis-config", context: "Redis on port 6379" });
     const tw = makeTripwire({
       name: "auth",
@@ -93,9 +104,16 @@ describe("formatContext", () => {
       { separator: "\n---\n", maxLength: 0 },
     );
 
-    expect(result).toContain("[TRIPWIRE:warning] auth");
-    expect(result).toContain("[TRIPWIRE:warning] auth/dep: redis-config");
+    expect(result).toContain('name="auth"');
+    expect(result).toContain('name="auth/dep:redis-config"');
     expect(result).toContain("Redis on port 6379");
+  });
+
+  it("joins multiple tags with commas", () => {
+    const tw = makeTripwire({ name: "x", context: "ctx", tags: ["security", "architecture"] });
+    const result = formatContext([makeMatch(tw)], { separator: "\n---\n", maxLength: 0 });
+
+    expect(result).toContain('tags="security,architecture"');
   });
 });
 
