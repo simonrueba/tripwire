@@ -135,6 +135,37 @@ describe("formatContext", () => {
     expect(result).toContain("parent (critical)");
   });
 
+  it("globally dedupes shared dependencies across groups", () => {
+    const sharedDep = makeTripwire({ name: "shared", context: "Shared dep context" });
+    const twA = makeTripwire({
+      name: "alpha",
+      severity: "critical",
+      context: "Alpha context",
+      depends_on: ["shared"],
+    });
+    const twB = makeTripwire({
+      name: "beta",
+      severity: "warning",
+      context: "Beta context",
+      depends_on: ["shared"],
+    });
+
+    const result = formatContext(
+      [makeMatch(twA, [sharedDep]), makeMatch(twB, [sharedDep])],
+      { separator: "\n---\n", maxLength: 0 },
+    );
+
+    // Shared dep should appear exactly once (with first group = alpha)
+    const firstOccurrence = result.indexOf('name="shared"');
+    const secondOccurrence = result.indexOf('name="shared"', firstOccurrence + 1);
+    expect(firstOccurrence).toBeGreaterThan(-1);
+    expect(secondOccurrence).toBe(-1); // no second occurrence
+
+    // Should be parented to alpha (the first group)
+    expect(result).toContain('parent="alpha"');
+    expect(result).not.toContain('parent="beta"');
+  });
+
   it("joins multiple tags with commas", () => {
     const tw = makeTripwire({ name: "x", context: "ctx", tags: ["security", "architecture"] });
     const result = formatContext([makeMatch(tw)], { separator: "\n---\n", maxLength: 0 });

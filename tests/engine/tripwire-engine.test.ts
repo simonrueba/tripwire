@@ -414,7 +414,7 @@ created_by: human
       expect(overlap).toBeUndefined();
     });
 
-    it("warns on invalid created_by format in strict mode", async () => {
+    it("errors on invalid created_by format in strict mode", async () => {
       const engine = createEngine({
         "/project/.tripwires/bad-format.yml": `
 triggers:
@@ -425,10 +425,26 @@ created_by: claude
       });
 
       const results = await engine.lint({ strict: true });
-      const format = results.find((r) => r.message.includes("expected"));
+      const format = results.find((r) => r.message.includes("must be"));
       expect(format).toBeDefined();
-      expect(format?.level).toBe("warning");
+      expect(format?.level).toBe("error");
       expect(format?.message).toContain("agent:<client>");
+    });
+
+    it("errors on bare agent without client in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/bare-agent.yml": `
+triggers:
+  - "src/**"
+context: "Bare agent"
+created_by: agent
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const format = results.find((r) => r.message.includes("must be"));
+      expect(format).toBeDefined();
+      expect(format?.level).toBe("error");
     });
 
     it("passes created_by format check for canonical values", async () => {
@@ -448,7 +464,7 @@ created_by: agent:claude
       });
 
       const results = await engine.lint({ strict: true });
-      const format = results.find((r) => r.message.includes("expected"));
+      const format = results.find((r) => r.message.includes("must be"));
       expect(format).toBeUndefined();
     });
 
@@ -556,6 +572,23 @@ triggers:
 context: "Bad tags"
 created_by: human
 tags: ["sec,urity"]
+`,
+      });
+
+      const results = await engine.lint();
+      const tagErr = results.find((r) => r.message.includes("Invalid tag"));
+      expect(tagErr).toBeDefined();
+      expect(tagErr?.level).toBe("error");
+    });
+
+    it("errors on uppercase or space in tag names", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/bad-tag2.yml": `
+triggers:
+  - "src/**"
+context: "Bad tags"
+created_by: human
+tags: ["Security"]
 `,
       });
 

@@ -7,9 +7,15 @@ export interface InjectorOptions {
 
 /**
  * Format matched tripwires into an injectable context block.
- * Sorted by severity (critical first), then alphabetically.
- * Dependencies are emitted before their parent (depth-first topological order).
- * If a dependency can't fit in the budget, the parent is suppressed too.
+ *
+ * Groups are constructed per matched root tripwire: deps (DFS order) then parent.
+ * Groups are ordered by root severity DESC, then root name ASC.
+ * Dependencies are globally deduped per response — a dependency block appears at
+ * most once, emitted with the first group that references it.
+ * Groups are atomic for truncation: if the group doesn't fit, all of it is suppressed.
+ *
+ * Budget counts the fully rendered injection string (header + context + footer +
+ * trailing newline per block). Separator and file content are NOT part of the budget.
  */
 export function formatContext(
   matches: MatchResult[],
@@ -27,32 +33,37 @@ export function formatContext(
   const blocks: string[] = [];
   let totalLength = 0;
   const suppressed: string[] = [];
+  const emittedDeps = new Set<string>(); // global dedupe across groups
 
   for (const match of sorted) {
-    // Pre-compute all blocks for this match: deps first, then parent
-    const depBlocks: string[] = [];
+    // Pre-compute all blocks for this group: deps first (globally deduped), then parent
+    const groupBlocks: string[] = [];
     let groupLength = 0;
 
     for (const dep of match.dependencies) {
+      if (emittedDeps.has(dep.name)) continue; // already emitted by earlier group
       const depBlock = formatDependencyBlock(match.tripwire.name, dep);
-      depBlocks.push(depBlock);
+      groupBlocks.push(depBlock);
       groupLength += depBlock.length;
     }
 
     const parentBlock = formatTripwireBlock(match);
+    groupBlocks.push(parentBlock);
     groupLength += parentBlock.length;
 
-    // If the entire group (deps + parent) doesn't fit, suppress all of it
+    // Atomic: if the entire group doesn't fit, suppress all of it
     if (options.maxLength > 0 && totalLength + groupLength > options.maxLength) {
       suppressed.push(`${match.tripwire.name} (${match.tripwire.severity})`);
       continue;
     }
 
-    // Emit deps first, then parent
-    for (const depBlock of depBlocks) {
-      blocks.push(depBlock);
+    // Commit group to output and mark deps as emitted
+    for (const dep of match.dependencies) {
+      emittedDeps.add(dep.name);
     }
-    blocks.push(parentBlock);
+    for (const block of groupBlocks) {
+      blocks.push(block);
+    }
     totalLength += groupLength;
   }
 
