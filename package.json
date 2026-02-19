@@ -1,6 +1,6 @@
 {
   "name": "@tripwire-mcp/tripwire",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Context injection for AI agents, triggered by the codebase itself",
   "type": "module",
   "bin": {
@@ -39,10 +39,15 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
     "ai",
-    "context",
+    "ai-agent",
+    "context-injection",
     "tripwire",
-    "agent"
+    "claude",
+    "cursor",
+    "code-quality",
+    "developer-tools"
   ],
   "license": "MIT",
   "engines": {
