@@ -337,6 +337,36 @@ severity: critical
       expect(conflict?.message).toContain("crit-b");
     });
 
+    it("errors on missing created_by in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/no-author.yml": `
+triggers:
+  - "src/**"
+context: "Missing author"
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const missing = results.find((r) => r.message.includes("Missing created_by"));
+      expect(missing).toBeDefined();
+      expect(missing?.level).toBe("error");
+    });
+
+    it("passes created_by check when present in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/authored.yml": `
+triggers:
+  - "src/**"
+context: "Has author"
+created_by: human
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const missing = results.find((r) => r.message.includes("Missing created_by"));
+      expect(missing).toBeUndefined();
+    });
+
     it("warns on large total context size in strict mode", async () => {
       const engine = createEngine({
         "/project/.tripwires/big.yml": `
