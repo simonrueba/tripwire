@@ -9,6 +9,10 @@ export {
   type ValidationError,
   type LintResult,
   type TripwireStats,
+  type ExplainMatch,
+  type ExplainDependency,
+  type ExplainSuppressed,
+  type ExplainResult,
 } from "./tripwire.js";
 
 export {

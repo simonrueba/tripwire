@@ -9,6 +9,10 @@ import { registerCreateTripwire } from "./tools/create-tripwire.js";
 import { registerListTripwires } from "./tools/list-tripwires.js";
 import { registerCheckTripwires } from "./tools/check-tripwires.js";
 import { registerDeactivateTripwire } from "./tools/deactivate-tripwire.js";
+import { registerExplain } from "./tools/explain.js";
+import { registerListDirectory } from "./tools/list-directory.js";
+import { registerFileStat } from "./tools/file-stat.js";
+import { registerSearchFiles } from "./tools/search-files.js";
 
 export async function createAndStartServer(projectRoot: string): Promise<void> {
   const fs = new RealFileSystem();
@@ -27,6 +31,10 @@ export async function createAndStartServer(projectRoot: string): Promise<void> {
   registerListTripwires(server, engine);
   registerCheckTripwires(server, engine);
   registerDeactivateTripwire(server, engine);
+  registerExplain(server, engine);
+  registerListDirectory(server, fs, projectRoot);
+  registerFileStat(server, fs, projectRoot);
+  registerSearchFiles(server, fs, projectRoot);
 
   // Watch .tripwires/ for changes and invalidate cache
   const config = engine.getConfig();

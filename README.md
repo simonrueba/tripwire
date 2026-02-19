@@ -49,7 +49,7 @@ Requires **Node.js >= 18**.
   "mcpServers": {
     "tripwire": {
       "command": "npx",
-      "args": ["@simonrueba/tripwire", "serve", "--project", "."]
+      "args": ["-y", "@simonrueba/tripwire", "serve", "--project", "."]
     }
   }
 }
@@ -58,6 +58,39 @@ Requires **Node.js >= 18**.
 **Cursor** — add to `.cursor/mcp.json` with the same config. Note: Cursor does not support PreToolUse hooks, so enforcement requires agents to choose the Tripwire tool (see [Cursor Strategy](#cursor-strategy)).
 
 **Any MCP-compatible client** — Tripwire speaks standard MCP over stdio.
+
+### Recommended team setup
+
+Install as a dev dependency so everyone gets the same version:
+
+```bash
+npm install --save-dev @simonrueba/tripwire
+```
+
+Add scripts to `package.json`:
+
+```json
+{
+  "scripts": {
+    "tripwire": "tripwire",
+    "tripwire:lint": "tripwire lint --strict",
+    "tripwire:doctor": "tripwire doctor"
+  }
+}
+```
+
+Then point `.mcp.json` at the local install (no `-y` needed):
+
+```json
+{
+  "mcpServers": {
+    "tripwire": {
+      "command": "npx",
+      "args": ["tripwire", "serve", "--project", "."]
+    }
+  }
+}
+```
 
 For a complete working setup, see [`examples/hello-tripwire/`](examples/hello-tripwire/).
 
@@ -160,6 +193,52 @@ Tripwire uses standard glob syntax:
 
 ---
 
+## Behavior Specification
+
+This section documents the exact runtime semantics. Useful for debugging, writing tests, or building alternative clients.
+
+### Path matching
+
+Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching.
+
+**Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
+
+**Positive vs. negation patterns:**
+- Positive patterns (e.g. `src/auth/**`) match files for inclusion.
+- Negation patterns start with `!` (e.g. `!**/*.test.ts`) and exclude files that would otherwise match.
+- A path matches if it matches **at least one** positive pattern AND **zero** negation patterns.
+- If **all** patterns are negation, an implicit `**` positive pattern is added (i.e. "match everything except...").
+
+### Ordering
+
+When multiple tripwires match a path, they are sorted deterministically:
+
+1. **Severity descending:** critical (0) > high (1) > warning (2) > info (3)
+2. **Name ascending** (alphabetical) within the same severity
+
+This order determines both the injection sequence and which tripwires survive truncation.
+
+### Truncation
+
+When `max_context_length > 0`, Tripwire enforces a context budget:
+
+- **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
+- **Budget includes dependencies** — dependency blocks count toward the same budget.
+- **Higher severity wins** — because tripwires are sorted by severity first, critical/high tripwires are always included before warning/info.
+- **Suppressed block** — when tripwires are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists exactly what was dropped, so agents know context was withheld.
+
+### Dependencies
+
+Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' context when they fire.
+
+- **Transitive resolution** — dependencies are resolved transitively up to `max_dependency_depth` (default: 5).
+- **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
+- **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
+- **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
+- **Rendering** — dependencies are rendered as `<<<TRIPWIRE ... name="parentName/dep:depName">>>` to distinguish them from direct matches.
+
+---
+
 ## MCP Tools
 
 The server exposes these tools to connected agents:
@@ -208,6 +287,10 @@ Returns all active tripwires, optionally filtered by path, tag, or severity.
 
 Given a file path, returns which tripwires would fire — useful for agents to preview before reading.
 
+### `explain`
+
+Given a file path, returns a structured breakdown of what would be injected and why: matched tripwires with their globs, resolved dependencies, suppressed entries, active config, and the full rendered injection. Useful for debugging.
+
 ### `deactivate_tripwire`
 
 Soft-disables a tripwire without deleting the file. Adds `active: false` to the YAML.
@@ -224,6 +307,7 @@ tripwire list [--tag <tag>] [--severity <level>]     # List all tripwires
 tripwire lint [--strict] [--prune]                   # Validate all tripwire YAML files
 tripwire stats [--json]                              # Show tripwire coverage and statistics
 tripwire doctor [--json]                             # Check enforcement setup
+tripwire explain <filepath> [--json]                 # Show what would be injected and why
 ```
 
 ---
@@ -239,15 +323,15 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 3. Merged tripwires propagate to the whole team on next pull
 4. Expired tripwires get cleaned up with `tripwire lint --prune`
 
-**Security note:** Tripwires influence agent behavior. Treat them like code — review them in PRs, don't auto-merge agent-authored tripwires, and be especially careful with `critical` severity since it shapes how agents interact with sensitive modules.
+**Security note:** Tripwires influence agent behavior. Treat them like code — review them in PRs, don't auto-merge agent-authored tripwires, and be especially careful with `critical` severity since it shapes how agents interact with sensitive modules. See [SECURITY.md](SECURITY.md) for the full threat model, CODEOWNERS setup, and CI recipes.
 
-### `.gitattributes` (optional)
+### `.gitattributes` (advanced, optional)
 
 ```
 .tripwires/*.yml merge=union
 ```
 
-Reduces merge conflicts when multiple agents create tripwires in parallel.
+**Caveat:** `merge=union` auto-merges by keeping both sides line-by-line. This works well when two branches *add different tripwire files*, but can silently duplicate YAML keys if two branches edit the *same* tripwire. The safer default is normal merges with `tripwire lint --strict` in CI to catch any breakage. Only use `merge=union` if your team understands the trade-off.
 
 ### Pre-commit hook (optional)
 
@@ -453,21 +537,40 @@ Run `tripwire doctor` first — it checks all components and tells you exactly w
 
 ---
 
+## Filesystem Proxy Mode
+
+Tripwire ships 4 filesystem tools so it can serve as the **sole FS provider** for MCP clients. Only `read_file` injects context — the other 3 are thin pass-throughs:
+
+| Tool | Behavior |
+|---|---|
+| `read_file` | Checks tripwires, injects context, returns file content |
+| `list_directory` | Lists entries in a directory (pass-through) |
+| `file_stat` | Returns type, size, modified, created (pass-through) |
+| `search_files` | Glob search for files (pass-through) |
+
+This means you can configure Tripwire as the only filesystem server. Agents get full FS access, but all reads go through the tripwire engine. No enforcement hooks needed — there's simply no other way to read files.
+
+### When to use proxy mode vs. hooks
+
+| Approach | Best for | Limitation |
+|---|---|---|
+| **Enforcement hooks** | Claude Code (supports PreToolUse) | Client-specific |
+| **Proxy mode** | Cursor, any MCP client | Must be the only FS server |
+| **Both** | Maximum coverage | More setup |
+
+---
+
 ## Cursor Strategy
 
 Tripwire's MCP server works in Cursor — agents can call `read_file`, `list_tripwires`, etc. The difference is **enforcement**: Cursor does not support PreToolUse hooks, so there's no way to block raw filesystem reads.
 
-**Current behavior (v1):** Tripwire works when agents explicitly use Tripwire tools. No automatic enforcement.
-
-**Workaround:** Configure Tripwire as the **only** filesystem-capable MCP server. If no other server provides `read_file`, agents must use Tripwire's version.
-
-**Roadmap:** Tripwire as a full filesystem proxy — implement the minimal set of FS tools (`read`, `list`, `stat`, `search`) with injection on reads. This makes Tripwire the filesystem server with policies, eliminating bypass regardless of client.
+**Recommended:** Use **filesystem proxy mode** — configure Tripwire as the only filesystem-capable MCP server. With `read_file`, `list_directory`, `file_stat`, and `search_files` available, agents have full FS access through Tripwire. If no other server provides filesystem tools, agents must use Tripwire's versions, and all reads get context injection automatically.
 
 ---
 
 ## Roadmap
 
-- [ ] **Filesystem proxy mode** — serve read/list/stat/search tools so Tripwire is the only FS provider
+- [x] **Filesystem proxy mode** — serve read/list/stat/search tools so Tripwire is the only FS provider
 - [ ] **Stale detection** — flag tripwires whose triggered files have changed significantly since creation
 - [ ] **Firing analytics** — track which tripwires fire most, which never fire (candidates for removal)
 - [ ] **Semantic matching** — match on file content/intent, not just path globs

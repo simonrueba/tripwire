@@ -52,6 +52,9 @@
     "url": "https://github.com/simonrueba/tripwire/issues"
   },
   "homepage": "https://github.com/simonrueba/tripwire#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "commander": "^14.0.3",

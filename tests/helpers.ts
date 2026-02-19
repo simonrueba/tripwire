@@ -1,4 +1,4 @@
-import type { IFileSystem } from "../src/io/fs-adapter.js";
+import type { IFileSystem, FileStat } from "../src/io/fs-adapter.js";
 
 /**
  * In-memory filesystem for testing the engine without touching disk.
@@ -64,6 +64,34 @@ export class InMemoryFileSystem implements IFileSystem {
 
   async mkdir(): Promise<void> {
     // No-op for in-memory FS
+  }
+
+  async stat(filePath: string): Promise<FileStat> {
+    // Check if it's a file
+    const content = this.files.get(filePath);
+    if (content !== undefined) {
+      return {
+        size: Buffer.byteLength(content, "utf-8"),
+        modified: new Date("2025-01-01"),
+        created: new Date("2025-01-01"),
+        type: "file",
+      };
+    }
+
+    // Check if it's a directory prefix
+    const prefix = filePath.endsWith("/") ? filePath : filePath + "/";
+    for (const key of this.files.keys()) {
+      if (key.startsWith(prefix)) {
+        return {
+          size: 0,
+          modified: new Date("2025-01-01"),
+          created: new Date("2025-01-01"),
+          type: "directory",
+        };
+      }
+    }
+
+    throw new Error(`ENOENT: ${filePath}`);
   }
 
   getFile(path: string): string | undefined {

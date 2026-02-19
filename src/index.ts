@@ -3,7 +3,7 @@ export { matchPath } from "./engine/matcher.js";
 export { formatContext, injectContext } from "./engine/injector.js";
 export { loadTripwireFiles } from "./engine/loader.js";
 export { resolveDependencies } from "./engine/resolver.js";
-export { RealFileSystem, type IFileSystem } from "./io/fs-adapter.js";
+export { RealFileSystem, type IFileSystem, type FileStat } from "./io/fs-adapter.js";
 export type {
   Severity,
   Tripwire,
@@ -11,6 +11,10 @@ export type {
   MatchResult,
   LintResult,
   TripwireStats,
+  ExplainMatch,
+  ExplainDependency,
+  ExplainSuppressed,
+  ExplainResult,
 } from "./types/index.js";
 export type { TripwireConfig } from "./types/index.js";
 export { TripwireError, TripwireErrorCode } from "./types/index.js";

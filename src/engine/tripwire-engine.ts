@@ -14,6 +14,10 @@ import {
   type TripwireStats,
   type ValidationError,
   type Severity,
+  type ExplainResult,
+  type ExplainMatch,
+  type ExplainDependency,
+  type ExplainSuppressed,
 } from "../types/tripwire.js";
 import { TripwireError, TripwireErrorCode } from "../types/errors.js";
 import { loadTripwireFiles } from "./loader.js";
@@ -167,6 +171,88 @@ export class TripwireEngine {
     const fullContent = injectContext(injectedContext, originalContent, this.config.separator);
 
     return { originalContent, injectedContext, fullContent, matches };
+  }
+
+  async explain(filePath: string): Promise<ExplainResult> {
+    const relativePath = this.toRelative(filePath);
+
+    const emptyResult: ExplainResult = {
+      filePath: relativePath,
+      config: {
+        inject_mode: this.config.inject_mode,
+        max_context_length: this.config.max_context_length,
+        enforcement_mode: this.config.enforcement_mode,
+      },
+      directMatches: [],
+      resolvedDependencies: [],
+      suppressed: [],
+      renderedInjection: "",
+      totalContextLength: 0,
+    };
+
+    if (this.isExcluded(relativePath)) return emptyResult;
+
+    const matches = await this.checkPath(filePath);
+
+    if (matches.length === 0) return emptyResult;
+
+    // Build direct matches with matched globs
+    const directMatches: ExplainMatch[] = matches.map((m) => ({
+      name: m.tripwire.name,
+      severity: m.tripwire.severity,
+      matchedGlobs: m.matchedTriggers,
+      tags: m.tripwire.tags,
+      contextPreview: m.tripwire.context.trim().slice(0, 120),
+    }));
+
+    // Build dependency list with resolvedVia
+    const resolvedDependencies: ExplainDependency[] = [];
+    for (const match of matches) {
+      for (const dep of match.dependencies) {
+        // Avoid duplicates
+        if (!resolvedDependencies.some((d) => d.name === dep.name)) {
+          resolvedDependencies.push({
+            name: dep.name,
+            severity: dep.severity,
+            resolvedVia: match.tripwire.name,
+          });
+        }
+      }
+    }
+
+    // Render the injection to detect suppressed tripwires
+    const renderedInjection = formatContext(matches, {
+      separator: this.config.separator,
+      maxLength: this.config.max_context_length,
+    });
+
+    // Parse suppressed block from rendered output
+    const suppressed: ExplainSuppressed[] = [];
+    const suppressedMatch = renderedInjection.match(
+      /<<<TRIPWIRE_SUPPRESSED count="(\d+)" reason="([^"]+)">>>\nSuppressed: ([^\n]+)\n<<<END_TRIPWIRE_SUPPRESSED>>>/,
+    );
+    if (suppressedMatch) {
+      const entries = suppressedMatch[3].split(", ");
+      for (const entry of entries) {
+        const parts = entry.match(/^(.+) \((.+)\)$/);
+        if (parts) {
+          suppressed.push({
+            name: parts[1],
+            severity: parts[2] as Severity,
+            reason: suppressedMatch[2],
+          });
+        }
+      }
+    }
+
+    return {
+      ...emptyResult,
+      directMatches,
+      resolvedDependencies,
+      suppressed,
+      renderedInjection,
+      totalContextLength: renderedInjection.length,
+    };
   }
 
   async createTripwire(
