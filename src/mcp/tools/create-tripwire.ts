@@ -13,8 +13,9 @@ export function registerCreateTripwire(server: McpServer, engine: TripwireEngine
       severity: z.enum(["info", "warning", "high", "critical"]).optional().describe("Severity level"),
       learned_from: z.string().optional().describe("What mistake prompted this tripwire"),
       tags: z.array(z.string()).optional().describe("Tags for categorization"),
+      force: z.boolean().optional().describe("Overwrite existing tripwire with same name"),
     },
-    async ({ name, triggers, context, severity, learned_from, tags }) => {
+    async ({ name, triggers, context, severity, learned_from, tags, force }) => {
       try {
         const result = await engine.createTripwire(name, {
           triggers,
@@ -23,6 +24,7 @@ export function registerCreateTripwire(server: McpServer, engine: TripwireEngine
           created_by: "agent",
           learned_from,
           tags,
+          force,
         });
 
         return {
