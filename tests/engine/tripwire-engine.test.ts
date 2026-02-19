@@ -121,6 +121,23 @@ context: "Auth context"
       expect(content).toContain("src/models/**");
     });
 
+    it("rejects overwriting an existing tripwire", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/existing.yml": `
+triggers:
+  - "src/**"
+context: "Already here"
+`,
+      });
+
+      await expect(
+        engine.createTripwire("existing", {
+          triggers: ["src/**"],
+          context: "Overwrite attempt",
+        }),
+      ).rejects.toThrow("already exists");
+    });
+
     it("rejects agent-created tripwires when disabled", async () => {
       const fs = new InMemoryFileSystem({});
       const engine = new TripwireEngine({
@@ -254,6 +271,44 @@ context: "Valid"
       expect(results).toHaveLength(1);
       expect(results[0].level).toBe("warning");
       expect(results[0].message).toContain("does not exist");
+    });
+
+    it("detects identical trigger sets in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/alpha.yml": `
+triggers:
+  - "src/auth/**"
+context: "Use JWT"
+severity: critical
+`,
+        "/project/.tripwires/beta.yml": `
+triggers:
+  - "src/auth/**"
+context: "Never use JWT"
+severity: critical
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const conflict = results.find((r) => r.message.includes("Identical triggers"));
+      expect(conflict).toBeDefined();
+      expect(conflict?.message).toContain("alpha");
+      expect(conflict?.message).toContain("beta");
+    });
+
+    it("warns on large total context size in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/big.yml": `
+triggers:
+  - "src/**"
+context: "${"A".repeat(9000)}"
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const sizeWarning = results.find((r) => r.message.includes("Total context size"));
+      expect(sizeWarning).toBeDefined();
+      expect(sizeWarning?.level).toBe("warning");
     });
   });
 });

@@ -279,6 +279,15 @@ export class TripwireEngine {
     const fileName = `${normalized}.yml`;
     const filePath = path.join(this.tripwiresDir, fileName);
 
+    // Prevent silent overwrites
+    const exists = await this.fs.exists(filePath);
+    if (exists) {
+      throw new TripwireError(
+        `Tripwire "${normalized}" already exists at ${fileName}. Delete or deactivate the existing tripwire first.`,
+        TripwireErrorCode.TRIPWIRE_ALREADY_EXISTS,
+      );
+    }
+
     // Build YAML content (omit defaults for cleaner files)
     const yamlObj: Record<string, unknown> = {
       triggers: validated.triggers,
@@ -429,6 +438,42 @@ export class TripwireEngine {
         results.push({ file: fileName, level: "error", message: `Duplicate tripwire name: ${canonicalName}` });
       }
       seenNames.add(canonicalName);
+    }
+
+    // Cross-tripwire checks (only with --strict)
+    if (options?.strict) {
+      const activeTripwires = await this.getTripwires();
+
+      // Detect identical trigger sets
+      const triggerMap = new Map<string, string[]>();
+      for (const tw of activeTripwires) {
+        const key = [...tw.triggers].sort().join("\0");
+        const existing = triggerMap.get(key);
+        if (existing) {
+          existing.push(tw.name);
+        } else {
+          triggerMap.set(key, [tw.name]);
+        }
+      }
+      for (const [, names] of triggerMap) {
+        if (names.length > 1) {
+          results.push({
+            file: ".tripwires/",
+            level: "warning",
+            message: `Identical triggers: ${names.join(", ")} — may inject conflicting context`,
+          });
+        }
+      }
+
+      // Warn if total context size is large
+      const totalContextSize = activeTripwires.reduce((sum, tw) => sum + tw.context.length, 0);
+      if (totalContextSize > 8000) {
+        results.push({
+          file: ".tripwires/",
+          level: "warning",
+          message: `Total context size is ${totalContextSize} chars — large injections increase cost and may be truncated by clients`,
+        });
+      }
     }
 
     return results;
