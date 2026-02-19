@@ -91,7 +91,7 @@ describe("formatContext", () => {
     expect(result).toBe("");
   });
 
-  it("includes dependency context with structured markers", () => {
+  it("emits dependencies before parent (deps-first ordering)", () => {
     const dep = makeTripwire({ name: "redis-config", context: "Redis on port 6379" });
     const tw = makeTripwire({
       name: "auth",
@@ -107,6 +107,32 @@ describe("formatContext", () => {
     expect(result).toContain('name="auth"');
     expect(result).toContain('name="redis-config" origin="dependency" parent="auth"');
     expect(result).toContain("Redis on port 6379");
+
+    // Deps must appear before parent
+    const depPos = result.indexOf('name="redis-config"');
+    const parentPos = result.indexOf('name="auth"');
+    expect(depPos).toBeLessThan(parentPos);
+  });
+
+  it("suppresses parent when dependency exceeds budget", () => {
+    const dep = makeTripwire({ name: "big-dep", context: "D".repeat(200) });
+    const tw = makeTripwire({
+      name: "parent",
+      severity: "critical",
+      context: "Short parent",
+      depends_on: ["big-dep"],
+    });
+
+    const result = formatContext(
+      [makeMatch(tw, [dep])],
+      { separator: "\n---\n", maxLength: 50 },
+    );
+
+    // Both parent and dep should be suppressed since dep can't fit
+    expect(result).not.toContain('name="parent"');
+    expect(result).not.toContain('name="big-dep"');
+    expect(result).toContain("<<<TRIPWIRE_SUPPRESSED");
+    expect(result).toContain("parent (critical)");
   });
 
   it("joins multiple tags with commas", () => {

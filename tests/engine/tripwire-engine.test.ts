@@ -499,6 +499,88 @@ created_by: human
       expect(sizeWarning?.level).toBe("warning");
     });
 
+    it("errors on agent-authored tripwire missing expires when auto_expire_days > 0", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/no-expiry.yml": `
+triggers:
+  - "src/**"
+context: "Some rule"
+created_by: agent:claude
+learned_from: "Made a mistake"
+`,
+      });
+
+      const results = await engine.lint();
+      const missing = results.find((r) => r.message.includes("missing expires"));
+      expect(missing).toBeDefined();
+      expect(missing?.level).toBe("error");
+    });
+
+    it("passes expires check for agent tripwires with expires set", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/has-expiry.yml": `
+triggers:
+  - "src/**"
+context: "Some rule"
+created_by: agent:claude
+learned_from: "Made a mistake"
+expires: 2027-01-01
+`,
+      });
+
+      const results = await engine.lint();
+      const missing = results.find((r) => r.message.includes("missing expires"));
+      expect(missing).toBeUndefined();
+    });
+
+    it("passes expires check for human-authored tripwires without expires", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/human-no-exp.yml": `
+triggers:
+  - "src/**"
+context: "Human rule"
+created_by: human
+`,
+      });
+
+      const results = await engine.lint();
+      const missing = results.find((r) => r.message.includes("missing expires"));
+      expect(missing).toBeUndefined();
+    });
+
+    it("errors on tag names with commas", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/bad-tag.yml": `
+triggers:
+  - "src/**"
+context: "Bad tags"
+created_by: human
+tags: ["sec,urity"]
+`,
+      });
+
+      const results = await engine.lint();
+      const tagErr = results.find((r) => r.message.includes("Invalid tag"));
+      expect(tagErr).toBeDefined();
+      expect(tagErr?.level).toBe("error");
+    });
+
+    it("passes tag validation for clean tag names", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/good-tags.yml": `
+triggers:
+  - "src/**"
+context: "Good tags"
+created_by: human
+tags: ["security", "architecture"]
+`,
+      });
+
+      const results = await engine.lint();
+      const tagErr = results.find((r) => r.message.includes("Invalid tag"));
+      expect(tagErr).toBeUndefined();
+    });
+
     it("warns on large aggregate context in strict mode", async () => {
       const engine = createEngine({
         "/project/.tripwires/big-a.yml": `
