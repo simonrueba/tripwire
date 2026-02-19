@@ -85,7 +85,7 @@ function formatTripwireBlock(match: MatchResult): string {
 
 function formatDependencyBlock(parentName: string, dep: TripwireFile): string {
   const tags = dep.tags.length > 0 ? ` tags="${dep.tags.join(",")}"` : "";
-  const header = `<<<TRIPWIRE severity="${dep.severity}" name="${parentName}/dep:${dep.name}"${tags}>>>`;
+  const header = `<<<TRIPWIRE severity="${dep.severity}" name="${dep.name}" origin="dependency" parent="${parentName}"${tags}>>>`;
   const footer = "<<<END_TRIPWIRE>>>";
   return `${header}\n${dep.context.trim()}\n${footer}\n`;
 }

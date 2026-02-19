@@ -18,32 +18,25 @@ Agent opens payments/stripe.py
 ## How It Works
 
 1. **Tripwires live in your repo** as small YAML files in `.tripwires/`
-2. **The MCP server watches file reads** and glob-matches against tripwire triggers
-3. **Matched context is prepended** to the file content — invisible to the developer, automatic for the agent
+2. **The MCP server handles file read tool calls** and glob-matches against tripwire triggers
+3. **Matched context is prepended** to the file content — automatic for the agent, inspectable via `tripwire explain`
 4. **Agents author new tripwires** when they make mistakes and get corrected
 5. **Everything syncs via git** — tripwires travel with the code, get reviewed in PRs, and propagate across the team
 
 No external services. No databases. No setup beyond starting the server.
 
+> **Security:** Tripwires are an instruction channel to agents. Treat `.tripwires/` like code — protect with CODEOWNERS and CI review gates. See [SECURITY.md](SECURITY.md).
+
 ---
 
 ## Installation
 
-```bash
-npm install -g @simonrueba/tripwire
-```
-
-Or add to your project locally:
-
-```bash
-npm install --save-dev @simonrueba/tripwire
-```
-
 Requires **Node.js >= 18**.
 
-### Connect to your editor
+### Quick try (no install)
 
-**Claude Code** — add to `.mcp.json`:
+Add to `.mcp.json` and go:
+
 ```json
 {
   "mcpServers": {
@@ -55,13 +48,11 @@ Requires **Node.js >= 18**.
 }
 ```
 
-**Cursor** — add to `.cursor/mcp.json` with the same config. Note: Cursor does not support PreToolUse hooks, so enforcement requires agents to choose the Tripwire tool (see [Cursor Strategy](#cursor-strategy)).
+For Cursor, use `.cursor/mcp.json` with the same config.
 
-**Any MCP-compatible client** — Tripwire speaks standard MCP over stdio.
+### Team setup (recommended)
 
-### Recommended team setup
-
-Install as a dev dependency so everyone gets the same version:
+Pin as a dev dependency so everyone gets the same version:
 
 ```bash
 npm install --save-dev @simonrueba/tripwire
@@ -79,7 +70,7 @@ Add scripts to `package.json`:
 }
 ```
 
-Then point `.mcp.json` at the local install (no `-y` needed):
+Point `.mcp.json` at the local install (no `-y` needed):
 
 ```json
 {
@@ -92,7 +83,15 @@ Then point `.mcp.json` at the local install (no `-y` needed):
 }
 ```
 
-For a complete working setup, see [`examples/hello-tripwire/`](examples/hello-tripwire/).
+### Alternative: global install
+
+```bash
+npm install -g @simonrueba/tripwire
+```
+
+### Any MCP-compatible client
+
+Tripwire speaks standard MCP over stdio. For a complete working setup, see [`examples/hello-tripwire/`](examples/hello-tripwire/).
 
 ---
 
@@ -224,7 +223,7 @@ When `max_context_length > 0`, Tripwire enforces a context budget:
 
 - **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
 - **Budget includes dependencies** — dependency blocks count toward the same budget.
-- **Higher severity wins** — because tripwires are sorted by severity first, critical/high tripwires are always included before warning/info.
+- **Best-effort in sort order** — tripwires are attempted in sorted order (severity DESC, name ASC). Higher-severity tripwires are attempted first but there is no hard guarantee they fit. If a single block exceeds the budget, it is suppressed — even if it's critical. Set `max_context_length: 0` (unlimited, the default) if you need to guarantee all tripwires fire.
 - **Suppressed block** — when tripwires are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists exactly what was dropped, so agents know context was withheld.
 
 ### Dependencies
@@ -235,7 +234,7 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
 - **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
-- **Rendering** — dependencies are rendered as `<<<TRIPWIRE ... name="parentName/dep:depName">>>` to distinguish them from direct matches.
+- **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
 
 ---
 
@@ -548,7 +547,9 @@ Tripwire ships 4 filesystem tools so it can serve as the **sole FS provider** fo
 | `file_stat` | Returns type, size, modified, created (pass-through) |
 | `search_files` | Glob search for files (pass-through) |
 
-This means you can configure Tripwire as the only filesystem server. Agents get full FS access, but all reads go through the tripwire engine. No enforcement hooks needed — there's simply no other way to read files.
+This means you can configure Tripwire as the only filesystem server. Agents discover available tools at connection time via MCP's `tools/list` — if no other server provides filesystem tools, agents must use Tripwire's versions and all reads get context injection automatically.
+
+**Note:** Proxy mode works because MCP clients discover tools dynamically, not because of fixed tool names. If your client has built-in filesystem access outside of MCP (e.g. a native `Read` command), you still need enforcement hooks or must disable that built-in access.
 
 ### When to use proxy mode vs. hooks
 
