@@ -6,6 +6,8 @@ Tripwire is a local MCP server that auto-injects relevant context when an agent 
 
 Agents don't know what they don't know. Tripwire fixes that.
 
+> **Mental model:** Tripwires are path-based policies. They inject context into file reads. They are deterministic and repo-native. Enforcement depends on client support (hooks) or proxy mode.
+
 ```
 Agent opens payments/stripe.py
   → Tripwire fires
@@ -161,7 +163,7 @@ context: |          # Free-text context injected when triggered (markdown suppor
   See ADR-012 for the migration rationale.
 
 # Optional
-severity: info | warning | high | critical    # Default: warning
+severity: info | warning | high | critical    # Default: warning (affects ordering only)
 created_by: human | <agent-name>               # Who authored this tripwire
 learned_from: "..."                            # What mistake prompted this (agent-authored)
 tags:                                          # For filtering and organization
@@ -216,6 +218,8 @@ When multiple tripwires match a path, they are sorted deterministically:
 2. **Name ascending** (alphabetical) within the same severity
 
 This order determines both the injection sequence and which tripwires survive truncation.
+
+**Severity affects ordering and observability only.** It does not change enforcement behavior, block writes, or gate actions. All matched tripwires are injected regardless of severity — the level is a signal to the agent about how seriously to treat the context.
 
 ### Truncation
 
@@ -277,6 +281,13 @@ Allows agents to author new tripwires. Creates a `.yml` file in `.tripwires/`.
   "learned_from": "Migration #47 corrupted the users table in staging"
 }
 ```
+
+**Behavior:**
+- The `name` is normalized to a canonical filename (`a-z`, `0-9`, hyphens only). `Db_Migration Checklist` becomes `db-migration-checklist.yml`.
+- If a tripwire with the same normalized name already exists, the call **fails** (no silent overwrites). Delete or deactivate the existing tripwire first.
+- `created_by` defaults to `"human"`. Agents should set it to their name.
+- If `created_by` is not `"human"` and `auto_expire_days > 0`, an `expires` date is automatically added.
+- If `require_learned_from` is `true` (default) and `created_by` is not `"human"`, validation requires the `learned_from` field.
 
 ### `list_tripwires`
 
@@ -549,7 +560,7 @@ Tripwire ships 4 filesystem tools so it can serve as the **sole FS provider** fo
 
 This means you can configure Tripwire as the only filesystem server. Agents discover available tools at connection time via MCP's `tools/list` — if no other server provides filesystem tools, agents must use Tripwire's versions and all reads get context injection automatically.
 
-**Note:** Proxy mode works because MCP clients discover tools dynamically, not because of fixed tool names. If your client has built-in filesystem access outside of MCP (e.g. a native `Read` command), you still need enforcement hooks or must disable that built-in access.
+**Note:** Proxy mode guarantees coverage only when the client uses MCP for all filesystem access. If the client provides built-in non-MCP file access (e.g. a native `Read` command), enforcement hooks or client-level controls are still required.
 
 ### When to use proxy mode vs. hooks
 
