@@ -105,7 +105,7 @@ describe("formatContext", () => {
     );
 
     expect(result).toContain('name="auth"');
-    expect(result).toContain('name="auth/dep:redis-config"');
+    expect(result).toContain('name="redis-config" origin="dependency" parent="auth"');
     expect(result).toContain("Redis on port 6379");
   });
 
