@@ -5,6 +5,11 @@ export interface MatchPathResult {
   matchedTriggers: string[];
 }
 
+export interface MatchOptions {
+  /** Case-insensitive matching (default: false = case-sensitive) */
+  nocase?: boolean;
+}
+
 /**
  * Test whether a file path matches a tripwire's trigger patterns.
  *
@@ -13,8 +18,9 @@ export interface MatchPathResult {
  * - A path matches if it matches >= 1 positive AND 0 negation patterns
  * - If ALL patterns are negation, implicit "**" is added as positive
  */
-export function matchPath(filePath: string, triggers: string[]): MatchPathResult {
+export function matchPath(filePath: string, triggers: string[], options?: MatchOptions): MatchPathResult {
   const normalized = normalizePath(filePath);
+  const mmOpts = { dot: true, nocase: options?.nocase ?? false };
 
   const positive = triggers.filter((t) => !t.startsWith("!"));
   const negations = triggers.filter((t) => t.startsWith("!")).map((t) => t.slice(1));
@@ -22,7 +28,7 @@ export function matchPath(filePath: string, triggers: string[]): MatchPathResult
   const effectivePositive = positive.length > 0 ? positive : ["**"];
 
   const matchedTriggers = effectivePositive.filter((pattern) =>
-    micromatch.isMatch(normalized, pattern, { dot: true }),
+    micromatch.isMatch(normalized, pattern, mmOpts),
   );
 
   if (matchedTriggers.length === 0) {
@@ -30,7 +36,7 @@ export function matchPath(filePath: string, triggers: string[]): MatchPathResult
   }
 
   const excluded = negations.some((pattern) =>
-    micromatch.isMatch(normalized, pattern, { dot: true }),
+    micromatch.isMatch(normalized, pattern, mmOpts),
   );
 
   if (excluded) {

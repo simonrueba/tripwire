@@ -51,6 +51,37 @@ context: "Everything"
       const matches = await engine.checkPath("node_modules/foo/bar.js");
       expect(matches).toHaveLength(0);
     });
+
+    it("matches case-insensitively when match_case is false", async () => {
+      const fs = new InMemoryFileSystem({
+        "/project/.tripwires/auth.yml": `
+triggers:
+  - "src/Auth/**"
+context: "Auth context"
+`,
+      });
+      const engine = new TripwireEngine({
+        projectRoot: "/project",
+        fs,
+        config: { match_case: false },
+      });
+
+      const matches = await engine.checkPath("src/auth/login.ts");
+      expect(matches).toHaveLength(1);
+    });
+
+    it("does not match different case when match_case is true (default)", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/auth.yml": `
+triggers:
+  - "src/Auth/**"
+context: "Auth context"
+`,
+      });
+
+      const matches = await engine.checkPath("src/auth/login.ts");
+      expect(matches).toHaveLength(0);
+    });
   });
 
   describe("readFileWithContext", () => {
@@ -332,29 +363,55 @@ created_by: human
       expect(conflict?.message).toContain("beta");
     });
 
-    it("warns when multiple critical tripwires exist in strict mode", async () => {
+    it("warns when multiple critical tripwires overlap on same files", async () => {
       const engine = createEngine({
         "/project/.tripwires/crit-a.yml": `
 triggers:
-  - "src/auth/**"
+  - "src/**"
 context: "Use JWT"
 severity: critical
 created_by: human
 `,
         "/project/.tripwires/crit-b.yml": `
 triggers:
-  - "src/billing/**"
+  - "src/**"
 context: "No hardcoded keys"
 severity: critical
 created_by: human
 `,
+        "/project/src/index.ts": "// code",
       });
 
       const results = await engine.lint({ strict: true });
-      const conflict = results.find((r) => r.message.includes("critical tripwires"));
-      expect(conflict).toBeDefined();
-      expect(conflict?.message).toContain("crit-a");
-      expect(conflict?.message).toContain("crit-b");
+      const overlap = results.find((r) => r.message.includes("Critical overlap"));
+      expect(overlap).toBeDefined();
+      expect(overlap?.message).toContain("crit-a");
+      expect(overlap?.message).toContain("crit-b");
+    });
+
+    it("does not warn when critical tripwires have disjoint triggers", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/crit-a.yml": `
+triggers:
+  - "src/auth/**"
+context: "Auth rules"
+severity: critical
+created_by: human
+`,
+        "/project/.tripwires/crit-b.yml": `
+triggers:
+  - "src/billing/**"
+context: "Billing rules"
+severity: critical
+created_by: human
+`,
+        "/project/src/auth/login.ts": "// auth",
+        "/project/src/billing/charge.ts": "// billing",
+      });
+
+      const results = await engine.lint({ strict: true });
+      const overlap = results.find((r) => r.message.includes("Critical overlap"));
+      expect(overlap).toBeUndefined();
     });
 
     it("warns on invalid created_by format in strict mode", async () => {
@@ -395,20 +452,73 @@ created_by: agent:claude
       expect(format).toBeUndefined();
     });
 
-    it("warns on large total context size in strict mode", async () => {
+    it("errors on agent-authored tripwire missing learned_from", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/no-reason.yml": `
+triggers:
+  - "src/**"
+context: "Some rule"
+created_by: agent:claude
+`,
+      });
+
+      const results = await engine.lint();
+      const missing = results.find((r) => r.message.includes("missing learned_from"));
+      expect(missing).toBeDefined();
+      expect(missing?.level).toBe("error");
+    });
+
+    it("passes learned_from check for human-authored tripwires", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/human-ok.yml": `
+triggers:
+  - "src/**"
+context: "Human rule"
+created_by: human
+`,
+      });
+
+      const results = await engine.lint();
+      const missing = results.find((r) => r.message.includes("missing learned_from"));
+      expect(missing).toBeUndefined();
+    });
+
+    it("warns on large individual context in strict mode", async () => {
       const engine = createEngine({
         "/project/.tripwires/big.yml": `
 triggers:
   - "src/**"
-context: "${"A".repeat(9000)}"
+context: "${"A".repeat(5000)}"
 created_by: human
 `,
       });
 
       const results = await engine.lint({ strict: true });
-      const sizeWarning = results.find((r) => r.message.includes("Total context size"));
+      const sizeWarning = results.find((r) => r.message.includes("chars"));
       expect(sizeWarning).toBeDefined();
       expect(sizeWarning?.level).toBe("warning");
+    });
+
+    it("warns on large aggregate context in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/big-a.yml": `
+triggers:
+  - "src/a/**"
+context: "${"A".repeat(9000)}"
+created_by: human
+`,
+        "/project/.tripwires/big-b.yml": `
+triggers:
+  - "src/b/**"
+context: "${"B".repeat(9000)}"
+created_by: human
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const aggWarning = results.find((r) => r.message.includes("Aggregate context"));
+      expect(aggWarning).toBeDefined();
+      expect(aggWarning?.level).toBe("warning");
     });
   });
 });
