@@ -8,7 +8,6 @@ import {
 } from "../types/config.js";
 import {
   TripwireSchema,
-  SEVERITY_ORDER,
   type TripwireFile,
   type MatchResult,
   type LintResult,
@@ -193,7 +192,6 @@ export class TripwireEngine {
 
     if (this.isExcluded(relativePath)) return emptyResult;
 
-    const tripwires = await this.getTripwires();
     const matches = await this.checkPath(filePath);
 
     if (matches.length === 0) return emptyResult;

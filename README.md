@@ -537,21 +537,40 @@ Run `tripwire doctor` first — it checks all components and tells you exactly w
 
 ---
 
+## Filesystem Proxy Mode
+
+Tripwire ships 4 filesystem tools so it can serve as the **sole FS provider** for MCP clients. Only `read_file` injects context — the other 3 are thin pass-throughs:
+
+| Tool | Behavior |
+|---|---|
+| `read_file` | Checks tripwires, injects context, returns file content |
+| `list_directory` | Lists entries in a directory (pass-through) |
+| `file_stat` | Returns type, size, modified, created (pass-through) |
+| `search_files` | Glob search for files (pass-through) |
+
+This means you can configure Tripwire as the only filesystem server. Agents get full FS access, but all reads go through the tripwire engine. No enforcement hooks needed — there's simply no other way to read files.
+
+### When to use proxy mode vs. hooks
+
+| Approach | Best for | Limitation |
+|---|---|---|
+| **Enforcement hooks** | Claude Code (supports PreToolUse) | Client-specific |
+| **Proxy mode** | Cursor, any MCP client | Must be the only FS server |
+| **Both** | Maximum coverage | More setup |
+
+---
+
 ## Cursor Strategy
 
 Tripwire's MCP server works in Cursor — agents can call `read_file`, `list_tripwires`, etc. The difference is **enforcement**: Cursor does not support PreToolUse hooks, so there's no way to block raw filesystem reads.
 
-**Current behavior (v1):** Tripwire works when agents explicitly use Tripwire tools. No automatic enforcement.
-
-**Workaround:** Configure Tripwire as the **only** filesystem-capable MCP server. If no other server provides `read_file`, agents must use Tripwire's version.
-
-**Roadmap:** Tripwire as a full filesystem proxy — implement the minimal set of FS tools (`read`, `list`, `stat`, `search`) with injection on reads. This makes Tripwire the filesystem server with policies, eliminating bypass regardless of client.
+**Recommended:** Use **filesystem proxy mode** — configure Tripwire as the only filesystem-capable MCP server. With `read_file`, `list_directory`, `file_stat`, and `search_files` available, agents have full FS access through Tripwire. If no other server provides filesystem tools, agents must use Tripwire's versions, and all reads get context injection automatically.
 
 ---
 
 ## Roadmap
 
-- [ ] **Filesystem proxy mode** — serve read/list/stat/search tools so Tripwire is the only FS provider
+- [x] **Filesystem proxy mode** — serve read/list/stat/search tools so Tripwire is the only FS provider
 - [ ] **Stale detection** — flag tripwires whose triggered files have changed significantly since creation
 - [ ] **Firing analytics** — track which tripwires fire most, which never fire (candidates for removal)
 - [ ] **Semantic matching** — match on file content/intent, not just path globs

@@ -2,6 +2,13 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import fg from "fast-glob";
 
+export interface FileStat {
+  size: number;
+  modified: Date;
+  created: Date;
+  type: "file" | "directory";
+}
+
 export interface IFileSystem {
   readFile(filePath: string): Promise<string>;
   writeFile(filePath: string, content: string): Promise<void>;
@@ -9,6 +16,7 @@ export interface IFileSystem {
   readdir(dirPath: string): Promise<string[]>;
   glob(pattern: string, options?: { cwd?: string }): Promise<string[]>;
   mkdir(dirPath: string, options?: { recursive?: boolean }): Promise<void>;
+  stat(filePath: string): Promise<FileStat>;
 }
 
 export class RealFileSystem implements IFileSystem {
@@ -40,5 +48,15 @@ export class RealFileSystem implements IFileSystem {
 
   async mkdir(dirPath: string, options?: { recursive?: boolean }): Promise<void> {
     await fs.mkdir(dirPath, options);
+  }
+
+  async stat(filePath: string): Promise<FileStat> {
+    const stats = await fs.stat(filePath);
+    return {
+      size: stats.size,
+      modified: stats.mtime,
+      created: stats.birthtime,
+      type: stats.isDirectory() ? "directory" : "file",
+    };
   }
 }
