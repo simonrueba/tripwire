@@ -230,20 +230,21 @@ export class TripwireEngine {
       maxLength: this.config.max_context_length,
     });
 
-    // Parse suppressed block from rendered output
+    // Parse suppressed block from rendered output (line-based: "<severity> <name>" per line)
     const suppressed: ExplainSuppressed[] = [];
     const suppressedMatch = renderedInjection.match(
-      /<<<TRIPWIRE_SUPPRESSED count="(\d+)" reason="([^"]+)">>>\nSuppressed: ([^\n]+)\n<<<END_TRIPWIRE_SUPPRESSED>>>/,
+      /<<<TRIPWIRE_SUPPRESSED count="(\d+)" reason="([^"]+)">>>\n([\s\S]*?)<<<END_TRIPWIRE_SUPPRESSED>>>/,
     );
     if (suppressedMatch) {
-      const entries = suppressedMatch[3].split(", ");
-      for (const entry of entries) {
-        const parts = entry.match(/^(.+) \((.+)\)$/);
+      const reason = suppressedMatch[2];
+      const lines = suppressedMatch[3].trim().split("\n");
+      for (const line of lines) {
+        const parts = line.match(/^(\S+)\s+(\S+)$/);
         if (parts) {
           suppressed.push({
-            name: parts[1],
-            severity: parts[2] as Severity,
-            reason: suppressedMatch[2],
+            name: parts[2],
+            severity: parts[1] as Severity,
+            reason,
           });
         }
       }
