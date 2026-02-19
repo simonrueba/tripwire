@@ -212,7 +212,7 @@ This section documents the exact runtime semantics. Useful for debugging, writin
 
 Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Supports brace expansion (`{a,b}`) and negation (`!`).
 
-**Case sensitivity:** Matching is case-sensitive by default (`match_case: true`). On case-insensitive filesystems (macOS, Windows), path casing reported by tools may not match trigger casing. Set `match_case: false` in `.tripwirerc.yml` to avoid mismatches.
+**Case sensitivity:** Matching is case-sensitive by default (`match_case: true`). When `match_case: false`, Tripwire passes `nocase: true` to micromatch, which performs case-insensitive comparison (equivalent to lowercasing both paths and patterns). On case-insensitive filesystems (macOS, Windows), path casing reported by tools may not match trigger casing — set `match_case: false` in `.tripwirerc.yml` to avoid mismatches.
 
 **Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
 
@@ -252,7 +252,7 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
 - **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
-- **Ordering** — parent tripwire is emitted first, then its dependencies in declaration order. Dependencies do not re-sort by severity; they inherit their parent's position in the output.
+- **Ordering** — dependencies are emitted first (depth-first), then the parent tripwire. The entire group (deps + parent) is treated atomically for truncation: if the group doesn't fit in the budget, all of it is suppressed. Dependencies inherit their parent's position in the output sort order.
 - **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
 
 ### Conflicts
@@ -262,10 +262,12 @@ Tripwire does not attempt to resolve conflicts between contexts. If two tripwire
 `tripwire lint` checks (always):
 - Missing `created_by` field (error)
 - Agent-authored tripwire (`created_by: agent:*`) missing `learned_from` when `require_learned_from` is true (error)
+- Agent-authored tripwire (`created_by: agent:*`) missing `expires` when `auto_expire_days > 0` (error) — prevents handwritten `agent:*` entries from bypassing auto-expiry
+- Invalid tag names containing commas, quotes, or newlines (error)
 
 `tripwire lint --strict` adds:
 - **Identical trigger sets** (warning) — two tripwires whose sorted trigger arrays are equal (order-insensitive). Exact match, not overlap detection.
-- **Critical overlap** (warning) — scans project files (up to 5000) and warns if any file matches >1 `critical` tripwire. Reports the specific tripwire names.
+- **Critical overlap** (warning) — enumerates project files (`glob("**")`, filtered by `exclude_paths`, sorted lexicographically, capped at 5000 — `.gitignore` is not honored) and warns if any file matches >1 `critical` tripwire. Reports the specific tripwire names.
 - **`created_by` format** (warning) — must be `human`, `agent:<client>`, or `tool:<name>`.
 - **Individual context > 4 KB** (warning) — suggests splitting.
 - **Aggregate context > 16 KB** (warning) — total across all tripwires.
@@ -398,10 +400,18 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 
 1. **CODEOWNERS** — protect `.tripwires/**` so changes require review
 2. **CI runs `tripwire lint --strict`** — catches missing `created_by`, format violations, critical overlaps
-3. **Block agent-authored criticals** — fail CI if a diff adds a file with `created_by: agent:*` and `severity: critical` without CODEOWNER approval:
+3. **Block agent-authored criticals** — fail CI if a diff adds a file with both `created_by: agent:*` and `severity: critical` without CODEOWNER approval:
    ```bash
-   git diff --name-only HEAD~1 -- .tripwires/ | xargs grep -l 'severity: critical' | \
-     xargs grep -l 'created_by: agent:' && echo "FAIL: agent-authored critical needs review" && exit 1
+   BASE=$(git merge-base origin/main HEAD)
+   FILES=$(git diff --name-only "$BASE" -- .tripwires/)
+   if [ -n "$FILES" ]; then
+     echo "$FILES" | while read -r f; do
+       if grep -q 'severity: critical' "$f" && grep -q 'created_by: agent:' "$f"; then
+         echo "FAIL: $f is agent-authored critical — requires CODEOWNER approval"
+         exit 1
+       fi
+     done
+   fi
    ```
 
 ### Pre-commit hook (optional)
@@ -444,7 +454,7 @@ exclude_paths:                # Never check tripwires for these paths
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `inject_mode` | `"prepend"` \| `"metadata"` | `"prepend"` | metadata returns context and content as separate blocks |
-| `separator` | string | `\n<<<TRIPWIRE_FILE_CONTENT>>>\n` | sentinel between context and file content |
+| `separator` | string | `\n<<<TRIPWIRE_FILE_CONTENT>>>\n` | sentinel between context and file content — unlikely in normal source but could appear in heredocs, templates, or test fixtures that reference Tripwire itself |
 | `max_context_length` | number | `0` (unlimited) | character budget (not tokens) — whole-tripwire truncation, never cuts mid-block |
 | `allow_agent_create` | boolean | `true` | set `false` to block agent-authored tripwires |
 | `require_learned_from` | boolean | `true` | agents must explain the mistake |

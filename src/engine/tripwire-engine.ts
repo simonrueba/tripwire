@@ -458,6 +458,18 @@ export class TripwireEngine {
         if (cb.startsWith("agent:") && this.config.require_learned_from && !rawObj.learned_from) {
           results.push({ file: fileName, level: "error", message: `Agent-authored tripwire missing learned_from (required by config)` });
         }
+
+        // Agent-authored tripwires must have expires when auto_expire_days > 0
+        if (cb.startsWith("agent:") && this.config.auto_expire_days > 0 && !rawObj.expires) {
+          results.push({ file: fileName, level: "error", message: `Agent-authored tripwire missing expires (auto_expire_days is ${this.config.auto_expire_days}). Add "expires: YYYY-MM-DD" or set auto_expire_days: 0` });
+        }
+      }
+
+      // Validate tag names (no commas, quotes, or newlines — rendered as CSV in headers)
+      for (const tag of tripwire.tags) {
+        if (/[,"\n\r]/.test(tag)) {
+          results.push({ file: fileName, level: "error", message: `Invalid tag "${tag}" — tags must not contain commas, quotes, or newlines` });
+        }
       }
 
       // Check for duplicate names (case-insensitive)
@@ -494,11 +506,13 @@ export class TripwireEngine {
       }
 
       // Path-scoped critical overlap: scan project files for >1 critical match
+      // Enumeration: glob("**"), exclude config exclude_paths, sort ASC, cap at 5000.
+      // Note: fast-glob does NOT honor .gitignore — exclude_paths is the only filter.
       const criticals = activeTripwires.filter((tw) => tw.severity === "critical");
       if (criticals.length > 1) {
         try {
           const allFiles = await this.fs.glob("**", { cwd: this.projectRoot });
-          const nonExcluded = allFiles.filter((f) => !this.isExcluded(f)).slice(0, 5000);
+          const nonExcluded = allFiles.filter((f) => !this.isExcluded(f)).sort().slice(0, 5000);
           const overlaps = new Map<string, string[]>();
           for (const file of nonExcluded) {
             const matchingCriticals = criticals.filter(

@@ -8,6 +8,8 @@ export interface InjectorOptions {
 /**
  * Format matched tripwires into an injectable context block.
  * Sorted by severity (critical first), then alphabetically.
+ * Dependencies are emitted before their parent (depth-first topological order).
+ * If a dependency can't fit in the budget, the parent is suppressed too.
  */
 export function formatContext(
   matches: MatchResult[],
@@ -24,38 +26,40 @@ export function formatContext(
 
   const blocks: string[] = [];
   let totalLength = 0;
-  let omitted = 0;
   const suppressed: string[] = [];
 
   for (const match of sorted) {
-    const block = formatTripwireBlock(match);
+    // Pre-compute all blocks for this match: deps first, then parent
+    const depBlocks: string[] = [];
+    let groupLength = 0;
 
-    if (options.maxLength > 0 && totalLength + block.length > options.maxLength) {
-      omitted = sorted.length - blocks.length;
-      for (let i = blocks.length; i < sorted.length; i++) {
-        suppressed.push(`${sorted[i].tripwire.name} (${sorted[i].tripwire.severity})`);
-      }
-      break;
-    }
-
-    blocks.push(block);
-    totalLength += block.length;
-
-    // Format dependency context
     for (const dep of match.dependencies) {
       const depBlock = formatDependencyBlock(match.tripwire.name, dep);
-      if (options.maxLength > 0 && totalLength + depBlock.length > options.maxLength) {
-        break;
-      }
-      blocks.push(depBlock);
-      totalLength += depBlock.length;
+      depBlocks.push(depBlock);
+      groupLength += depBlock.length;
     }
+
+    const parentBlock = formatTripwireBlock(match);
+    groupLength += parentBlock.length;
+
+    // If the entire group (deps + parent) doesn't fit, suppress all of it
+    if (options.maxLength > 0 && totalLength + groupLength > options.maxLength) {
+      suppressed.push(`${match.tripwire.name} (${match.tripwire.severity})`);
+      continue;
+    }
+
+    // Emit deps first, then parent
+    for (const depBlock of depBlocks) {
+      blocks.push(depBlock);
+    }
+    blocks.push(parentBlock);
+    totalLength += groupLength;
   }
 
   let result = blocks.join("\n");
 
-  if (omitted > 0) {
-    result += `\n<<<TRIPWIRE_SUPPRESSED count="${omitted}" reason="context_budget">>>\n`;
+  if (suppressed.length > 0) {
+    result += `\n<<<TRIPWIRE_SUPPRESSED count="${suppressed.length}" reason="context_budget">>>\n`;
     result += `Suppressed: ${suppressed.join(", ")}\n`;
     result += `<<<END_TRIPWIRE_SUPPRESSED>>>`;
   }
