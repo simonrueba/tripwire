@@ -70,6 +70,10 @@ export class TripwireEngine {
     return this.config;
   }
 
+  private get matchOptions() {
+    return { nocase: !this.config.match_case };
+  }
+
   private get tripwiresDir(): string {
     return path.join(this.projectRoot, this.config.tripwires_dir);
   }
@@ -101,7 +105,7 @@ export class TripwireEngine {
     const directMatches: MatchResult[] = [];
 
     for (const tripwire of tripwires) {
-      const result = matchPath(relativePath, tripwire.triggers);
+      const result = matchPath(relativePath, tripwire.triggers, this.matchOptions);
       if (result.matches) {
         directMatches.push({
           tripwire,
@@ -327,7 +331,7 @@ export class TripwireEngine {
 
     if (filters?.path) {
       const filterPath = filters.path;
-      tripwires = tripwires.filter((t) => matchPath(filterPath, t.triggers).matches);
+      tripwires = tripwires.filter((t) => matchPath(filterPath, t.triggers, this.matchOptions).matches);
     }
     if (filters?.tag) {
       const filterTag = filters.tag;
@@ -439,12 +443,20 @@ export class TripwireEngine {
       const rawObj = parsed as Record<string, unknown>;
       if (!rawObj.created_by) {
         results.push({ file: fileName, level: "error", message: "Missing created_by — required (e.g. human, agent:claude)" });
-      } else if (options?.strict) {
-        // Strict: validate created_by format
+      } else {
         const cb = String(rawObj.created_by);
-        const validFormat = cb === "human" || /^agent(:[a-z0-9-]+)?$/.test(cb) || /^tool(:[a-z0-9-]+)?$/.test(cb);
-        if (!validFormat) {
-          results.push({ file: fileName, level: "warning", message: `created_by "${cb}" — expected "human", "agent:<client>", or "tool:<name>"` });
+
+        // Strict: validate created_by format
+        if (options?.strict) {
+          const validFormat = cb === "human" || /^agent(:[a-z0-9-]+)?$/.test(cb) || /^tool(:[a-z0-9-]+)?$/.test(cb);
+          if (!validFormat) {
+            results.push({ file: fileName, level: "warning", message: `created_by "${cb}" — expected "human", "agent:<client>", or "tool:<name>"` });
+          }
+        }
+
+        // Agent-authored tripwires must include learned_from when required
+        if (cb.startsWith("agent:") && this.config.require_learned_from && !rawObj.learned_from) {
+          results.push({ file: fileName, level: "error", message: `Agent-authored tripwire missing learned_from (required by config)` });
         }
       }
 
@@ -481,14 +493,34 @@ export class TripwireEngine {
         }
       }
 
-      // Warn when multiple critical tripwires exist (high conflict risk)
+      // Path-scoped critical overlap: scan project files for >1 critical match
       const criticals = activeTripwires.filter((tw) => tw.severity === "critical");
       if (criticals.length > 1) {
-        results.push({
-          file: ".tripwires/",
-          level: "warning",
-          message: `${criticals.length} critical tripwires: ${criticals.map((t) => t.name).join(", ")} — review for contradictions`,
-        });
+        try {
+          const allFiles = await this.fs.glob("**", { cwd: this.projectRoot });
+          const nonExcluded = allFiles.filter((f) => !this.isExcluded(f)).slice(0, 5000);
+          const overlaps = new Map<string, string[]>();
+          for (const file of nonExcluded) {
+            const matchingCriticals = criticals.filter(
+              (tw) => matchPath(file, tw.triggers, this.matchOptions).matches,
+            );
+            if (matchingCriticals.length > 1) {
+              const key = matchingCriticals.map((t) => t.name).sort().join("+");
+              if (!overlaps.has(key)) {
+                overlaps.set(key, matchingCriticals.map((t) => t.name));
+              }
+            }
+          }
+          for (const [, names] of overlaps) {
+            results.push({
+              file: ".tripwires/",
+              level: "warning",
+              message: `Critical overlap: ${names.join(", ")} — these critical tripwires match the same files`,
+            });
+          }
+        } catch {
+          // If glob fails (e.g. permission issues), skip overlap check
+        }
       }
 
       // Warn if any critical tripwire exceeds max_context_length (would be suppressed)
@@ -504,13 +536,24 @@ export class TripwireEngine {
         }
       }
 
-      // Warn if total context size is large
+      // Warn on individual tripwires with large context
+      for (const tw of activeTripwires) {
+        if (tw.context.length > 4000) {
+          results.push({
+            file: `${tw.name}.yml`,
+            level: "warning",
+            message: `Context field is ${tw.context.length} chars — consider splitting into multiple tripwires`,
+          });
+        }
+      }
+
+      // Warn if aggregate context across all tripwires is large
       const totalContextSize = activeTripwires.reduce((sum, tw) => sum + tw.context.length, 0);
-      if (totalContextSize > 8000) {
+      if (totalContextSize > 16000) {
         results.push({
           file: ".tripwires/",
           level: "warning",
-          message: `Total context size is ${totalContextSize} chars — large injections increase cost and may be truncated by clients`,
+          message: `Aggregate context: ${totalContextSize} chars across ${activeTripwires.length} tripwires — large injections increase cost and may be truncated by clients`,
         });
       }
     }
@@ -587,7 +630,7 @@ export class TripwireEngine {
   }
 
   private isExcluded(relativePath: string): boolean {
-    return matchPath(relativePath, this.config.exclude_paths).matches;
+    return matchPath(relativePath, this.config.exclude_paths, this.matchOptions).matches;
   }
 }
 

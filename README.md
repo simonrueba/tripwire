@@ -165,7 +165,7 @@ created_by: human   # Who authored this (required — see format below)
 
 # Optional
 severity: info | warning | high | critical    # Default: warning (affects ordering only)
-learned_from: "..."                            # What mistake prompted this (agent-authored)
+learned_from: "..."                            # Required if created_by starts with agent:
 tags:                                          # For filtering and organization
   - security
   - architecture
@@ -200,7 +200,7 @@ Tripwire uses standard glob syntax:
 
 `lint --strict` validates the format. The MCP `create_tripwire` tool sets `created_by: agent:mcp` automatically.
 
-**Tags** are a comma-separated list. Commas are not allowed inside a tag name. When rendered in injection headers: `tags="security,architecture"`.
+**Tags** are a YAML string array. Commas are not allowed inside a tag name. In injection headers, tags are rendered as a comma-separated string: `tags="security,architecture"`.
 
 ---
 
@@ -210,9 +210,13 @@ This section documents the exact runtime semantics. Useful for debugging, writin
 
 ### Path matching
 
-Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Supports brace expansion (`{a,b}`) and negation (`!`). Matching is case-sensitive (micromatch default). On case-insensitive filesystems (macOS, Windows), a trigger for `src/Auth/**` will not match a file reported as `src/auth/login.ts` — write triggers to match the case your tooling reports.
+Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Supports brace expansion (`{a,b}`) and negation (`!`).
+
+**Case sensitivity:** Matching is case-sensitive by default (`match_case: true`). On case-insensitive filesystems (macOS, Windows), path casing reported by tools may not match trigger casing. Set `match_case: false` in `.tripwirerc.yml` to avoid mismatches.
 
 **Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
+
+**Evaluation order:** Config `exclude_paths` is checked first. If a path is excluded, no tripwire evaluation happens — even if a tripwire's triggers would match. Within a tripwire, negation patterns (`!`) apply after positive patterns.
 
 **Positive vs. negation patterns:**
 - Positive patterns (e.g. `src/auth/**`) match files for inclusion.
@@ -233,7 +237,7 @@ This order determines both the injection sequence and which tripwires survive tr
 
 ### Truncation
 
-When `max_context_length > 0`, Tripwire enforces a context budget:
+When `max_context_length > 0`, Tripwire enforces a character budget (not tokens — different clients may truncate independently):
 
 - **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
 - **Budget includes dependencies** — dependency blocks count toward the same budget.
@@ -248,6 +252,7 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
 - **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
+- **Ordering** — parent tripwire is emitted first, then its dependencies in declaration order. Dependencies do not re-sort by severity; they inherit their parent's position in the output.
 - **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
 
 ### Conflicts
@@ -256,12 +261,14 @@ Tripwire does not attempt to resolve conflicts between contexts. If two tripwire
 
 `tripwire lint` checks (always):
 - Missing `created_by` field (error)
+- Agent-authored tripwire (`created_by: agent:*`) missing `learned_from` when `require_learned_from` is true (error)
 
 `tripwire lint --strict` adds:
-- **Identical trigger sets** (warning) — two tripwires whose sorted trigger arrays are equal (order-insensitive). This is an exact match, not overlap detection.
-- **Multiple `critical` tripwires in the repo** (warning) — flags all critical tripwires by name so you can review for contradictions.
+- **Identical trigger sets** (warning) — two tripwires whose sorted trigger arrays are equal (order-insensitive). Exact match, not overlap detection.
+- **Critical overlap** (warning) — scans project files (up to 5000) and warns if any file matches >1 `critical` tripwire. Reports the specific tripwire names.
 - **`created_by` format** (warning) — must be `human`, `agent:<client>`, or `tool:<name>`.
-- **Context size > 8 KB total** (warning) — large injections increase cost and may be truncated by clients.
+- **Individual context > 4 KB** (warning) — suggests splitting.
+- **Aggregate context > 16 KB** (warning) — total across all tripwires.
 - **Critical tripwire exceeds `max_context_length`** (warning) — will be suppressed at runtime.
 
 `tripwire explain <path>` surfaces all matching tripwires for a given path, making conflicts visible before they cause problems.
@@ -288,7 +295,23 @@ See ADR-012 for the migration rationale.
 <actual file contents>
 ```
 
-**Injection format:** Context is wrapped in structured delimiters (`<<<TRIPWIRE>>>` / `<<<END_TRIPWIRE>>>`) for reliable LLM parsing. File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel that cannot appear naturally in code. When tripwires are suppressed due to `max_context_length`, a `<<<TRIPWIRE_SUPPRESSED>>>` block lists exactly what was dropped.
+**Delimiter format:**
+
+```
+<<<TRIPWIRE severity="<level>" name="<name>" [origin="dependency" parent="<parent>"] [tags="<csv>"]>>>
+<context text>
+<<<END_TRIPWIRE>>>
+```
+
+| Attribute | Always present | Values |
+|---|---|---|
+| `severity` | yes | `info`, `warning`, `high`, `critical` |
+| `name` | yes | tripwire filename without `.yml` |
+| `origin` | only on dependencies | `dependency` |
+| `parent` | only on dependencies | parent tripwire name |
+| `tags` | only if non-empty | comma-separated, no escaping (commas not allowed in tag names) |
+
+File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel. When tripwires are suppressed, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists what was dropped.
 
 **Injection modes:**
 - `prepend` (default) — context + sentinel + file content in a single response. Universal compatibility; works even when clients flatten multi-block tool outputs.
@@ -315,7 +338,7 @@ Allows agents to author new tripwires. Creates a `.yml` file in `.tripwires/`.
 - The MCP tool sets `created_by: "agent:mcp"` automatically. Hand-written YAML must include `created_by` explicitly — there is no default; `tripwire lint` errors if missing.
 - Overwrite is atomic (write to temp file, then rename).
 - If `created_by` is not `"human"` and `auto_expire_days > 0`, an `expires` date is automatically added.
-- If `require_learned_from` is `true` (default) and `created_by` is not `"human"`, validation requires the `learned_from` field.
+- If `require_learned_from` is `true` (default) and `created_by` starts with `agent:`, `learned_from` is required. `tripwire lint` enforces this.
 
 ### `list_tripwires`
 
@@ -371,13 +394,23 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 
 **Caveat:** `merge=union` auto-merges by keeping both sides line-by-line. This works well when two branches *add different tripwire files*, but can silently duplicate YAML keys if two branches edit the *same* tripwire. The safer default is normal merges with `tripwire lint --strict` in CI to catch any breakage. Only use `merge=union` if your team understands the trade-off.
 
+### Recommended CI policy
+
+1. **CODEOWNERS** — protect `.tripwires/**` so changes require review
+2. **CI runs `tripwire lint --strict`** — catches missing `created_by`, format violations, critical overlaps
+3. **Block agent-authored criticals** — fail CI if a diff adds a file with `created_by: agent:*` and `severity: critical` without CODEOWNER approval:
+   ```bash
+   git diff --name-only HEAD~1 -- .tripwires/ | xargs grep -l 'severity: critical' | \
+     xargs grep -l 'created_by: agent:' && echo "FAIL: agent-authored critical needs review" && exit 1
+   ```
+
 ### Pre-commit hook (optional)
 
 ```bash
 tripwire lint --strict
 ```
 
-Validates all tripwire files before commit — catches malformed YAML, invalid globs, and duplicate triggers.
+Validates all tripwire files before commit — catches malformed YAML, format violations, and critical overlaps.
 
 ---
 
@@ -412,7 +445,7 @@ exclude_paths:                # Never check tripwires for these paths
 |---|---|---|---|
 | `inject_mode` | `"prepend"` \| `"metadata"` | `"prepend"` | metadata returns context and content as separate blocks |
 | `separator` | string | `\n<<<TRIPWIRE_FILE_CONTENT>>>\n` | sentinel between context and file content |
-| `max_context_length` | number | `0` (unlimited) | whole-tripwire truncation — never cuts mid-block |
+| `max_context_length` | number | `0` (unlimited) | character budget (not tokens) — whole-tripwire truncation, never cuts mid-block |
 | `allow_agent_create` | boolean | `true` | set `false` to block agent-authored tripwires |
 | `require_learned_from` | boolean | `true` | agents must explain the mistake |
 | `auto_expire_days` | number | `90` | 0 = no auto-expiry |
@@ -420,6 +453,7 @@ exclude_paths:                # Never check tripwires for these paths
 | `exclude_paths` | string[] | `["node_modules/**", "dist/**", ".git/**"]` | never check tripwires for these |
 | `tripwires_dir` | string | `".tripwires"` | directory containing YAML files |
 | `max_dependency_depth` | number | `5` | max depth for `depends_on` chain resolution |
+| `match_case` | boolean | `true` | set `false` for case-insensitive matching (recommended on macOS/Windows) |
 
 Unknown keys are silently ignored. Use `tripwire lint --strict` to catch config issues.
 
@@ -595,7 +629,7 @@ Configure Tripwire as the only filesystem server. Agents discover available tool
 
 **How to close the gap per client:**
 - **Claude Code** — has a native `Read` tool that bypasses MCP. Use enforcement hooks (PreToolUse) to deny raw reads. Proxy mode alone is not sufficient.
-- **Cursor** — reads files via MCP tools when configured. If Tripwire is the only server providing filesystem tools, proxy mode is sufficient. If you also have another FS server enabled, disable it or ensure it doesn't provide `read_file`.
+- **Cursor** — proxy mode covers reads that go through MCP tools. If Tripwire is the only server providing filesystem tools, this is sufficient. If Cursor has other read pathways (version-dependent), Tripwire can't intercept them. Disable other FS servers if present.
 - **Other MCP clients** — check whether the client has built-in file access. If it does and there's no hook mechanism, proxy mode cannot enforce coverage. We don't yet know which clients support disabling native FS — if yours does, let us know.
 
 ### When to use proxy mode vs. hooks

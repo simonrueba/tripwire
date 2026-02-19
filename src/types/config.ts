@@ -11,6 +11,7 @@ export const TripwireConfigSchema = z.object({
   tripwires_dir: z.string().default(".tripwires"),
   max_dependency_depth: z.number().int().min(1).max(10).default(5),
   enforcement_mode: z.enum(["strict", "advisory"]).default("strict"),
+  match_case: z.boolean().default(true),
 });
 
 export type TripwireConfig = z.infer<typeof TripwireConfigSchema>;
