@@ -49,7 +49,7 @@ Requires **Node.js >= 18**.
   "mcpServers": {
     "tripwire": {
       "command": "npx",
-      "args": ["@simonrueba/tripwire", "serve", "--project", "."]
+      "args": ["-y", "@simonrueba/tripwire", "serve", "--project", "."]
     }
   }
 }
@@ -58,6 +58,39 @@ Requires **Node.js >= 18**.
 **Cursor** — add to `.cursor/mcp.json` with the same config. Note: Cursor does not support PreToolUse hooks, so enforcement requires agents to choose the Tripwire tool (see [Cursor Strategy](#cursor-strategy)).
 
 **Any MCP-compatible client** — Tripwire speaks standard MCP over stdio.
+
+### Recommended team setup
+
+Install as a dev dependency so everyone gets the same version:
+
+```bash
+npm install --save-dev @simonrueba/tripwire
+```
+
+Add scripts to `package.json`:
+
+```json
+{
+  "scripts": {
+    "tripwire": "tripwire",
+    "tripwire:lint": "tripwire lint --strict",
+    "tripwire:doctor": "tripwire doctor"
+  }
+}
+```
+
+Then point `.mcp.json` at the local install (no `-y` needed):
+
+```json
+{
+  "mcpServers": {
+    "tripwire": {
+      "command": "npx",
+      "args": ["tripwire", "serve", "--project", "."]
+    }
+  }
+}
+```
 
 For a complete working setup, see [`examples/hello-tripwire/`](examples/hello-tripwire/).
 
@@ -160,6 +193,52 @@ Tripwire uses standard glob syntax:
 
 ---
 
+## Behavior Specification
+
+This section documents the exact runtime semantics. Useful for debugging, writing tests, or building alternative clients.
+
+### Path matching
+
+Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching.
+
+**Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
+
+**Positive vs. negation patterns:**
+- Positive patterns (e.g. `src/auth/**`) match files for inclusion.
+- Negation patterns start with `!` (e.g. `!**/*.test.ts`) and exclude files that would otherwise match.
+- A path matches if it matches **at least one** positive pattern AND **zero** negation patterns.
+- If **all** patterns are negation, an implicit `**` positive pattern is added (i.e. "match everything except...").
+
+### Ordering
+
+When multiple tripwires match a path, they are sorted deterministically:
+
+1. **Severity descending:** critical (0) > high (1) > warning (2) > info (3)
+2. **Name ascending** (alphabetical) within the same severity
+
+This order determines both the injection sequence and which tripwires survive truncation.
+
+### Truncation
+
+When `max_context_length > 0`, Tripwire enforces a context budget:
+
+- **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
+- **Budget includes dependencies** — dependency blocks count toward the same budget.
+- **Higher severity wins** — because tripwires are sorted by severity first, critical/high tripwires are always included before warning/info.
+- **Suppressed block** — when tripwires are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists exactly what was dropped, so agents know context was withheld.
+
+### Dependencies
+
+Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' context when they fire.
+
+- **Transitive resolution** — dependencies are resolved transitively up to `max_dependency_depth` (default: 5).
+- **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
+- **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
+- **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
+- **Rendering** — dependencies are rendered as `<<<TRIPWIRE ... name="parentName/dep:depName">>>` to distinguish them from direct matches.
+
+---
+
 ## MCP Tools
 
 The server exposes these tools to connected agents:
@@ -241,13 +320,13 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 
 **Security note:** Tripwires influence agent behavior. Treat them like code — review them in PRs, don't auto-merge agent-authored tripwires, and be especially careful with `critical` severity since it shapes how agents interact with sensitive modules.
 
-### `.gitattributes` (optional)
+### `.gitattributes` (advanced, optional)
 
 ```
 .tripwires/*.yml merge=union
 ```
 
-Reduces merge conflicts when multiple agents create tripwires in parallel.
+**Caveat:** `merge=union` auto-merges by keeping both sides line-by-line. This works well when two branches *add different tripwire files*, but can silently duplicate YAML keys if two branches edit the *same* tripwire. The safer default is normal merges with `tripwire lint --strict` in CI to catch any breakage. Only use `merge=union` if your team understands the trade-off.
 
 ### Pre-commit hook (optional)
 
