@@ -28,3 +28,29 @@ jobs:
 
       - name: Verify package contents
         run: npm pack --dry-run
+
+  smoke-test:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install
+      - run: npm run build
+      - run: npm pack
+
+      - name: Install from tarball and smoke test
+        run: |
+          mkdir /tmp/smoke
+          cd /tmp/smoke
+          npm init -y
+          npm install $GITHUB_WORKSPACE/tripwire-mcp-tripwire-*.tgz
+          npx tripwire --version
+          npx tripwire --help
+          npx tripwire init
+          npx tripwire lint
+          npx tripwire list
