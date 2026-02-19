@@ -27,5 +27,4 @@ export function registerListDirectory(
   };
 
   server.tool("list_directory", description, schema, handler);
-  server.tool("list_dir", description, schema, handler);
 }

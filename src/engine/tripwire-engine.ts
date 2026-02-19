@@ -268,7 +268,7 @@ export class TripwireEngine {
       force?: boolean;
     },
   ): Promise<{ filePath: string; tripwire: TripwireFile }> {
-    if (!this.config.allow_agent_create && data.created_by !== "human") {
+    if (!this.config.allow_agent_create && data.created_by !== "human" && data.created_by !== undefined) {
       throw new TripwireError(
         "Agent-created tripwires are disabled in config",
         TripwireErrorCode.AGENT_CREATE_DISABLED,
@@ -291,19 +291,19 @@ export class TripwireEngine {
       }
     }
 
-    // Build YAML content (omit defaults for cleaner files)
+    // Build YAML content (omit defaults for cleaner files, but always include created_by)
     const yamlObj: Record<string, unknown> = {
       triggers: validated.triggers,
       context: validated.context,
     };
     if (validated.severity !== "warning") yamlObj.severity = validated.severity;
-    if (validated.created_by !== "human") yamlObj.created_by = validated.created_by;
+    if (validated.created_by) yamlObj.created_by = validated.created_by;
     if (validated.learned_from) yamlObj.learned_from = validated.learned_from;
     if (validated.tags.length > 0) yamlObj.tags = validated.tags;
     if (validated.depends_on.length > 0) yamlObj.depends_on = validated.depends_on;
 
     // Auto-expiry for agent-created tripwires
-    if (validated.created_by !== "human" && this.config.auto_expire_days > 0) {
+    if (validated.created_by && validated.created_by !== "human" && this.config.auto_expire_days > 0) {
       const expires = new Date();
       expires.setDate(expires.getDate() + this.config.auto_expire_days);
       yamlObj.expires = expires.toISOString().split("T")[0];
@@ -435,11 +435,16 @@ export class TripwireEngine {
         results.push({ file: fileName, level: "error", message: "No trigger patterns defined" });
       }
 
-      // Strict: created_by must be explicit (not defaulted)
-      if (options?.strict) {
-        const rawObj = parsed as Record<string, unknown>;
-        if (!rawObj.created_by) {
-          results.push({ file: fileName, level: "error", message: "Missing created_by — must be explicit (e.g. human, agent)" });
+      // created_by is required in all tripwires
+      const rawObj = parsed as Record<string, unknown>;
+      if (!rawObj.created_by) {
+        results.push({ file: fileName, level: "error", message: "Missing created_by — required (e.g. human, agent:claude)" });
+      } else if (options?.strict) {
+        // Strict: validate created_by format
+        const cb = String(rawObj.created_by);
+        const validFormat = cb === "human" || /^agent(:[a-z0-9-]+)?$/.test(cb) || /^tool(:[a-z0-9-]+)?$/.test(cb);
+        if (!validFormat) {
+          results.push({ file: fileName, level: "warning", message: `created_by "${cb}" — expected "human", "agent:<client>", or "tool:<name>"` });
         }
       }
 
@@ -541,7 +546,8 @@ export class TripwireEngine {
       for (const tag of tw.tags) {
         byTag[tag] = (byTag[tag] || 0) + 1;
       }
-      byCreator[tw.created_by] = (byCreator[tw.created_by] || 0) + 1;
+      const creator = tw.created_by ?? "unknown";
+      byCreator[creator] = (byCreator[creator] || 0) + 1;
     }
 
     // Count inactive/expired from raw files

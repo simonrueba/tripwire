@@ -143,7 +143,7 @@ context: |
   Breaking changes here will fail the contract test suite.
 
 severity: high
-created_by: claude
+created_by: agent:claude
 learned_from: "Changed a v1 response field, broke 3 downstream consumers"
 ```
 
@@ -161,10 +161,10 @@ triggers:           # Glob patterns matched against file paths (relative to repo
 context: |          # Free-text context injected when triggered (markdown supported)
   The auth module uses session-based auth, NOT JWT.
   See ADR-012 for the migration rationale.
+created_by: human   # Who authored this (required — see format below)
 
 # Optional
 severity: info | warning | high | critical    # Default: warning (affects ordering only)
-created_by: human | <agent-name>               # Who authored this tripwire
 learned_from: "..."                            # What mistake prompted this (agent-authored)
 tags:                                          # For filtering and organization
   - security
@@ -190,6 +190,16 @@ Tripwire uses standard glob syntax:
 
 **Tripwire names** are derived from the YAML filename and normalized to `a-z`, `0-9`, and hyphens. Spaces and underscores become hyphens. Names are case-insensitive — `No_Raw_SQL.yml` becomes `no-raw-sql`. `tripwire lint` checks for duplicate names.
 
+**`created_by`** is required. `tripwire lint` errors if missing. Canonical values:
+
+| Value | Meaning |
+|---|---|
+| `human` | Hand-written by a developer |
+| `agent:<client>` | Created via MCP tool (e.g. `agent:mcp`, `agent:claude-code`) |
+| `tool:<name>` | Created by automation (e.g. `tool:ci-generate`) |
+
+`lint --strict` validates the format. The MCP `create_tripwire` tool sets `created_by: agent:mcp` automatically.
+
 **Tags** are a comma-separated list. Commas are not allowed inside a tag name. When rendered in injection headers: `tags="security,architecture"`.
 
 ---
@@ -200,7 +210,7 @@ This section documents the exact runtime semantics. Useful for debugging, writin
 
 ### Path matching
 
-Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Brace expansion (`{a,b}`) and extglobs (`!(pattern)`) are supported. Matching is case-sensitive on all platforms.
+Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Supports brace expansion (`{a,b}`) and negation (`!`). Matching is case-sensitive (micromatch default). On case-insensitive filesystems (macOS, Windows), a trigger for `src/Auth/**` will not match a file reported as `src/auth/login.ts` — write triggers to match the case your tooling reports.
 
 **Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
 
@@ -244,10 +254,15 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 
 Tripwire does not attempt to resolve conflicts between contexts. If two tripwires match the same path and give contradictory instructions, both are injected and the agent sees both.
 
-`tripwire lint --strict` warns on:
-- Identical trigger sets across different tripwires
-- Multiple `critical` tripwires (high conflict risk)
-- Missing `created_by` field
+`tripwire lint` checks (always):
+- Missing `created_by` field (error)
+
+`tripwire lint --strict` adds:
+- **Identical trigger sets** (warning) — two tripwires whose sorted trigger arrays are equal (order-insensitive). This is an exact match, not overlap detection.
+- **Multiple `critical` tripwires in the repo** (warning) — flags all critical tripwires by name so you can review for contradictions.
+- **`created_by` format** (warning) — must be `human`, `agent:<client>`, or `tool:<name>`.
+- **Context size > 8 KB total** (warning) — large injections increase cost and may be truncated by clients.
+- **Critical tripwire exceeds `max_context_length`** (warning) — will be suppressed at runtime.
 
 `tripwire explain <path>` surfaces all matching tripwires for a given path, making conflicts visible before they cause problems.
 
@@ -297,7 +312,8 @@ Allows agents to author new tripwires. Creates a `.yml` file in `.tripwires/`.
 **Behavior:**
 - The `name` is normalized to a canonical filename (`a-z`, `0-9`, hyphens only). `Db_Migration Checklist` becomes `db-migration-checklist.yml`.
 - If a tripwire with the same normalized name already exists, the call **fails** (no silent overwrites). Pass `force: true` to overwrite, or delete/deactivate the existing tripwire first.
-- The MCP tool sets `created_by: "agent"` automatically. In hand-written YAML, `created_by` defaults to `"human"`.
+- The MCP tool sets `created_by: "agent:mcp"` automatically. Hand-written YAML must include `created_by` explicitly — there is no default; `tripwire lint` errors if missing.
+- Overwrite is atomic (write to temp file, then rename).
 - If `created_by` is not `"human"` and `auto_expire_days > 0`, an `expires` date is automatically added.
 - If `require_learned_from` is `true` (default) and `created_by` is not `"human"`, validation requires the `learned_from` field.
 
@@ -495,6 +511,7 @@ context: |
   due to SQL injection risk. If you need a complex query, add it to
   src/queries/ with parameterized statements.
 severity: high
+created_by: human
 ```
 
 ### Enforce architectural decisions
@@ -509,6 +526,7 @@ context: |
   Never import directly between these modules.
   ADR-007 has the full rationale.
 severity: critical
+created_by: human
 tags: [architecture]
 ```
 
@@ -523,7 +541,7 @@ context: |
   UTF-8 with BOM also works but some older Excel versions on
   Windows JP break. Always test with the fixtures in test/fixtures/jp/.
 severity: warning
-created_by: claude
+created_by: agent:claude
 learned_from: "Generated UTF-8 CSVs that showed garbled text for JP users"
 ```
 
@@ -538,6 +556,7 @@ context: |
   These modules are frozen during the Q1 audit (ends 2026-03-15).
   Do not modify without explicit approval from @finance-team.
 severity: critical
+created_by: human
 expires: 2026-03-15
 tags: [temporary, compliance]
 ```
@@ -563,21 +582,21 @@ Run `tripwire doctor` first — it checks all components and tells you exactly w
 
 Tripwire ships 4 filesystem tools so it can serve as the **sole FS provider** for MCP clients. Only `read_file` injects context — the other 3 are thin pass-throughs:
 
-| Tool | Alias | Behavior |
-|---|---|---|
-| `read_file` | — | Checks tripwires, injects context, returns file content |
-| `list_directory` | `list_dir` | Lists entries in a directory (pass-through) |
-| `file_stat` | `stat` | Returns type, size, modified, created (pass-through) |
-| `search_files` | `glob` | Glob search for files (pass-through) |
+| Tool | Behavior |
+|---|---|
+| `read_file` | Checks tripwires, injects context, returns file content |
+| `list_directory` | Lists entries in a directory (pass-through) |
+| `file_stat` | Returns type, size, modified, created (pass-through) |
+| `search_files` | Glob search for files (pass-through) |
 
-Aliases maximize compatibility across MCP clients whose system prompts may reference different tool names.
+Configure Tripwire as the only filesystem server. Agents discover available tools at connection time via MCP's `tools/list` — if no other server provides filesystem tools, agents must use Tripwire's versions and all reads get context injection automatically.
 
-This means you can configure Tripwire as the only filesystem server. Agents discover available tools at connection time via MCP's `tools/list` — if no other server provides filesystem tools, agents must use Tripwire's versions and all reads get context injection automatically.
+**Hard limitation:** Proxy mode only works if the client has no non-MCP file access enabled. If the client provides a native `Read` command, agents can bypass Tripwire by using that instead.
 
-**Hard limitation:** Proxy mode only works if the client has no non-MCP file access enabled. If the client provides a native `Read` command (e.g. Claude Code), agents can bypass Tripwire by using that instead. In those cases, enforcement hooks are still required.
-
-- Works in Cursor — *if* Cursor reads exclusively via MCP tools
-- Does **not** override native `Read` in clients that have it (e.g. Claude Code — use hooks)
+**How to close the gap per client:**
+- **Claude Code** — has a native `Read` tool that bypasses MCP. Use enforcement hooks (PreToolUse) to deny raw reads. Proxy mode alone is not sufficient.
+- **Cursor** — reads files via MCP tools when configured. If Tripwire is the only server providing filesystem tools, proxy mode is sufficient. If you also have another FS server enabled, disable it or ensure it doesn't provide `read_file`.
+- **Other MCP clients** — check whether the client has built-in file access. If it does and there's no hook mechanism, proxy mode cannot enforce coverage. We don't yet know which clients support disabling native FS — if yours does, let us know.
 
 ### When to use proxy mode vs. hooks
 

@@ -14,7 +14,7 @@ export const TripwireSchema = z.object({
   triggers: z.array(z.string()).min(1, "At least one trigger pattern is required"),
   context: z.string().min(1, "Context must not be empty"),
   severity: SeveritySchema.default("warning"),
-  created_by: z.string().default("human"),
+  created_by: z.string().optional(),
   learned_from: z.string().optional(),
   tags: z.array(z.string()).default([]),
   expires: z.coerce.date().optional(),

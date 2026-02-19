@@ -26,7 +26,10 @@ export class RealFileSystem implements IFileSystem {
 
   async writeFile(filePath: string, content: string): Promise<void> {
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, content, "utf-8");
+    // Atomic write: write to temp file then rename to prevent partial writes
+    const tmpPath = `${filePath}.${process.pid}.tmp`;
+    await fs.writeFile(tmpPath, content, "utf-8");
+    await fs.rename(tmpPath, filePath);
   }
 
   async exists(filePath: string): Promise<boolean> {
