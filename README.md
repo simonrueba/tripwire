@@ -1,5 +1,11 @@
 # Tripwire
 
+[![npm version](https://img.shields.io/npm/v/@tripwire-mcp/tripwire)](https://www.npmjs.com/package/@tripwire-mcp/tripwire)
+[![CI](https://github.com/simonrueba/tripwire/actions/workflows/ci.yml/badge.svg)](https://github.com/simonrueba/tripwire/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
+
 **Context injection for AI agents, triggered by the codebase itself.**
 
 Tripwire is a local MCP server that auto-injects relevant context when an agent reads files in your project. Define tripwires on paths — when an agent steps on one, it gets the knowledge it needs before it can do damage.
