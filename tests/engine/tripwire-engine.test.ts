@@ -264,11 +264,27 @@ severity: critical
 triggers:
   - "src/**"
 context: "Valid"
+created_by: human
 `,
       });
 
       const results = await engine.lint();
       expect(results).toHaveLength(0);
+    });
+
+    it("errors on missing created_by", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/no-author.yml": `
+triggers:
+  - "src/**"
+context: "Missing author"
+`,
+      });
+
+      const results = await engine.lint();
+      const missing = results.find((r) => r.message.includes("Missing created_by"));
+      expect(missing).toBeDefined();
+      expect(missing?.level).toBe("error");
     });
 
     it("reports invalid YAML", async () => {
@@ -298,12 +314,14 @@ triggers:
   - "src/auth/**"
 context: "Use JWT"
 severity: critical
+created_by: human
 `,
         "/project/.tripwires/beta.yml": `
 triggers:
   - "src/auth/**"
 context: "Never use JWT"
 severity: critical
+created_by: human
 `,
       });
 
@@ -321,12 +339,14 @@ triggers:
   - "src/auth/**"
 context: "Use JWT"
 severity: critical
+created_by: human
 `,
         "/project/.tripwires/crit-b.yml": `
 triggers:
   - "src/billing/**"
 context: "No hardcoded keys"
 severity: critical
+created_by: human
 `,
       });
 
@@ -337,34 +357,42 @@ severity: critical
       expect(conflict?.message).toContain("crit-b");
     });
 
-    it("errors on missing created_by in strict mode", async () => {
+    it("warns on invalid created_by format in strict mode", async () => {
       const engine = createEngine({
-        "/project/.tripwires/no-author.yml": `
+        "/project/.tripwires/bad-format.yml": `
 triggers:
   - "src/**"
-context: "Missing author"
+context: "Bad format"
+created_by: claude
 `,
       });
 
       const results = await engine.lint({ strict: true });
-      const missing = results.find((r) => r.message.includes("Missing created_by"));
-      expect(missing).toBeDefined();
-      expect(missing?.level).toBe("error");
+      const format = results.find((r) => r.message.includes("expected"));
+      expect(format).toBeDefined();
+      expect(format?.level).toBe("warning");
+      expect(format?.message).toContain("agent:<client>");
     });
 
-    it("passes created_by check when present in strict mode", async () => {
+    it("passes created_by format check for canonical values", async () => {
       const engine = createEngine({
-        "/project/.tripwires/authored.yml": `
+        "/project/.tripwires/human-ok.yml": `
 triggers:
-  - "src/**"
-context: "Has author"
+  - "src/a/**"
+context: "Human authored"
 created_by: human
+`,
+        "/project/.tripwires/agent-ok.yml": `
+triggers:
+  - "src/b/**"
+context: "Agent authored"
+created_by: agent:claude
 `,
       });
 
       const results = await engine.lint({ strict: true });
-      const missing = results.find((r) => r.message.includes("Missing created_by"));
-      expect(missing).toBeUndefined();
+      const format = results.find((r) => r.message.includes("expected"));
+      expect(format).toBeUndefined();
     });
 
     it("warns on large total context size in strict mode", async () => {
@@ -373,6 +401,7 @@ created_by: human
 triggers:
   - "src/**"
 context: "${"A".repeat(9000)}"
+created_by: human
 `,
       });
 

@@ -21,7 +21,7 @@ export function registerCreateTripwire(server: McpServer, engine: TripwireEngine
           triggers,
           context,
           severity,
-          created_by: "agent",
+          created_by: "agent:mcp",
           learned_from,
           tags,
           force,

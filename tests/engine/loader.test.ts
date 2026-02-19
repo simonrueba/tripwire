@@ -39,7 +39,7 @@ context: "Some context"
 
     expect(result.files).toHaveLength(1);
     expect(result.files[0].severity).toBe("warning");
-    expect(result.files[0].created_by).toBe("human");
+    expect(result.files[0].created_by).toBeUndefined();
     expect(result.files[0].tags).toEqual([]);
     expect(result.files[0].active).toBe(true);
   });

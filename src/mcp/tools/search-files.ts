@@ -28,5 +28,4 @@ export function registerSearchFiles(
   };
 
   server.tool("search_files", description, schema, handler);
-  server.tool("glob", description, schema, handler);
 }

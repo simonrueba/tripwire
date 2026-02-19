@@ -33,7 +33,7 @@ export async function listAction(options: {
     const tags = t.tags.length > 0 ? ` [${t.tags.join(", ")}]` : "";
     console.log(`  ${t.name} (${t.severity})${tags}`);
     console.log(`    Triggers: ${t.triggers.join(", ")}`);
-    if (t.created_by !== "human") {
+    if (t.created_by && t.created_by !== "human") {
       console.log(`    Created by: ${t.created_by}`);
     }
     if (t.learned_from) {

@@ -36,5 +36,4 @@ export function registerFileStat(
   };
 
   server.tool("file_stat", description, schema, handler);
-  server.tool("stat", description, schema, handler);
 }
