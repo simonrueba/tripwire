@@ -27,7 +27,7 @@ Agent opens payments/stripe.py
 
 No external services. No databases. No setup beyond starting the server.
 
-> **Security:** Tripwires are an instruction channel to agents. Treat `.tripwires/` like code — protect with CODEOWNERS and CI review gates. See [SECURITY.md](SECURITY.md).
+> **Threat model:** Tripwires are a privileged instruction channel — a malicious tripwire can steer agents into introducing vulnerabilities. Tripwire is guidance/policy injection, not a permission system. Protect `.tripwires/` with CODEOWNERS, require CI review for all changes, and reject agent-authored `critical` tripwires without human approval. See [SECURITY.md](SECURITY.md) for the full threat model and CI recipes.
 
 ---
 
@@ -200,7 +200,7 @@ This section documents the exact runtime semantics. Useful for debugging, writin
 
 ### Path matching
 
-Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching.
+Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Brace expansion (`{a,b}`) and extglobs (`!(pattern)`) are supported. Matching is case-sensitive on all platforms.
 
 **Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
 
@@ -227,7 +227,7 @@ When `max_context_length > 0`, Tripwire enforces a context budget:
 
 - **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
 - **Budget includes dependencies** — dependency blocks count toward the same budget.
-- **Best-effort in sort order** — tripwires are attempted in sorted order (severity DESC, name ASC). Higher-severity tripwires are attempted first but there is no hard guarantee they fit. If a single block exceeds the budget, it is suppressed — even if it's critical. Set `max_context_length: 0` (unlimited, the default) if you need to guarantee all tripwires fire.
+- **Best-effort in sort order** — tripwires are attempted in sorted order (severity DESC, name ASC). Higher-severity tripwires are attempted first but there is no hard guarantee they fit. If a single block exceeds the budget, it is suppressed — even if it's critical. **Recommended:** keep `max_context_length: 0` (unlimited, the default) for safety-critical repos where every tripwire must fire.
 - **Suppressed block** — when tripwires are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists exactly what was dropped, so agents know context was withheld.
 
 ### Dependencies
@@ -239,6 +239,17 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
 - **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
 - **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
+
+### Conflicts
+
+Tripwire does not attempt to resolve conflicts between contexts. If two tripwires match the same path and give contradictory instructions, both are injected and the agent sees both.
+
+`tripwire lint --strict` warns on:
+- Identical trigger sets across different tripwires
+- Multiple `critical` tripwires (high conflict risk)
+- Missing `created_by` field
+
+`tripwire explain <path>` surfaces all matching tripwires for a given path, making conflicts visible before they cause problems.
 
 ---
 
@@ -278,7 +289,8 @@ Allows agents to author new tripwires. Creates a `.yml` file in `.tripwires/`.
   "triggers": ["migrations/**"],
   "context": "Always run migrations against a copy of prod data first...",
   "severity": "high",
-  "learned_from": "Migration #47 corrupted the users table in staging"
+  "learned_from": "Migration #47 corrupted the users table in staging",
+  "force": false
 }
 ```
 
@@ -562,7 +574,10 @@ Aliases maximize compatibility across MCP clients whose system prompts may refer
 
 This means you can configure Tripwire as the only filesystem server. Agents discover available tools at connection time via MCP's `tools/list` — if no other server provides filesystem tools, agents must use Tripwire's versions and all reads get context injection automatically.
 
-**Note:** Proxy mode guarantees coverage only when the client uses MCP for all filesystem access. If the client provides built-in non-MCP file access (e.g. a native `Read` command), enforcement hooks or client-level controls are still required.
+**Hard limitation:** Proxy mode only works if the client has no non-MCP file access enabled. If the client provides a native `Read` command (e.g. Claude Code), agents can bypass Tripwire by using that instead. In those cases, enforcement hooks are still required.
+
+- Works in Cursor — *if* Cursor reads exclusively via MCP tools
+- Does **not** override native `Read` in clients that have it (e.g. Claude Code — use hooks)
 
 ### When to use proxy mode vs. hooks
 

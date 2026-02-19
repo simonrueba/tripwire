@@ -435,6 +435,14 @@ export class TripwireEngine {
         results.push({ file: fileName, level: "error", message: "No trigger patterns defined" });
       }
 
+      // Strict: created_by must be explicit (not defaulted)
+      if (options?.strict) {
+        const rawObj = parsed as Record<string, unknown>;
+        if (!rawObj.created_by) {
+          results.push({ file: fileName, level: "error", message: "Missing created_by — must be explicit (e.g. human, agent)" });
+        }
+      }
+
       // Check for duplicate names (case-insensitive)
       const canonicalName = path.basename(fileName, ".yml").toLowerCase();
       if (seenNames.has(canonicalName)) {
