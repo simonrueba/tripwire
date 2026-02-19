@@ -11,7 +11,7 @@ export interface InjectorOptions {
  * Groups are constructed per matched root tripwire: deps (DFS order) then parent.
  * Groups are ordered by root severity DESC, then root name ASC.
  * Dependencies are globally deduped per response — a dependency block appears at
- * most once, emitted with the first group that references it.
+ * most once, emitted with the first group that references it (the "originator").
  * Groups are atomic for truncation: if the group doesn't fit, all of it is suppressed.
  *
  * Budget counts the fully rendered injection string (header + context + footer +
@@ -32,7 +32,7 @@ export function formatContext(
 
   const blocks: string[] = [];
   let totalLength = 0;
-  const suppressed: string[] = [];
+  const suppressed: { name: string; severity: string }[] = [];
   const emittedDeps = new Set<string>(); // global dedupe across groups
 
   for (const match of sorted) {
@@ -53,7 +53,7 @@ export function formatContext(
 
     // Atomic: if the entire group doesn't fit, suppress all of it
     if (options.maxLength > 0 && totalLength + groupLength > options.maxLength) {
-      suppressed.push(`${match.tripwire.name} (${match.tripwire.severity})`);
+      suppressed.push({ name: match.tripwire.name, severity: match.tripwire.severity });
       continue;
     }
 
@@ -71,7 +71,7 @@ export function formatContext(
 
   if (suppressed.length > 0) {
     result += `\n<<<TRIPWIRE_SUPPRESSED count="${suppressed.length}" reason="context_budget">>>\n`;
-    result += `Suppressed: ${suppressed.join(", ")}\n`;
+    result += suppressed.map(s => `${s.severity} ${s.name}`).join("\n") + "\n";
     result += `<<<END_TRIPWIRE_SUPPRESSED>>>`;
   }
 
@@ -98,9 +98,9 @@ function formatTripwireBlock(match: MatchResult): string {
   return `${header}\n${tripwire.context.trim()}\n${footer}\n`;
 }
 
-function formatDependencyBlock(parentName: string, dep: TripwireFile): string {
+function formatDependencyBlock(originatorName: string, dep: TripwireFile): string {
   const tags = dep.tags.length > 0 ? ` tags="${dep.tags.join(",")}"` : "";
-  const header = `<<<TRIPWIRE severity="${dep.severity}" name="${dep.name}" origin="dependency" parent="${parentName}"${tags}>>>`;
+  const header = `<<<TRIPWIRE severity="${dep.severity}" name="${dep.name}" origin="dependency" originator="${originatorName}"${tags}>>>`;
   const footer = "<<<END_TRIPWIRE>>>";
   return `${header}\n${dep.context.trim()}\n${footer}\n`;
 }

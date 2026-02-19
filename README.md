@@ -244,7 +244,7 @@ When `max_context_length > 0`, Tripwire enforces a character budget on the injec
 - **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
 - **Budget includes dependencies** — dependency blocks count toward the same budget.
 - **Best-effort in sort order** — groups are attempted in sorted order (root severity DESC, root name ASC). Higher-severity groups are attempted first but there is no hard guarantee they fit. If a single group exceeds the budget, it is suppressed — even if it's critical. **Recommended:** keep `max_context_length: 0` (unlimited, the default) for safety-critical repos where every tripwire must fire.
-- **Suppressed block** — when groups are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists the root tripwire name and severity for each suppressed group. Dependencies suppressed as part of an atomic group are not listed individually — the root name identifies the group. **Suppressed entry format:** `Suppressed: <name> (<severity>), ...` (e.g. `Suppressed: billing-freeze (critical), old-api (warning)`).
+- **Suppressed block** — when groups are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists the root tripwire name and severity for each suppressed group. Dependencies suppressed as part of an atomic group are not listed individually — the root name identifies the group. **Suppressed entry format:** one line per suppressed root group: `<severity> <name>` (e.g. `critical billing-freeze`). The block ends with `<<<END_TRIPWIRE_SUPPRESSED>>>`.
 
 ### Dependencies
 
@@ -253,10 +253,10 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Transitive resolution** — dependencies are resolved transitively up to `max_dependency_depth` (default: 5).
 - **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
-- **Global deduplication** — each dependency block appears at most once per response. If multiple root groups reference the same dependency, it is emitted **once** with the earliest root group in sort order; its `parent="<parentName>"` attribute reflects the root tripwire that first caused it to be included.
+- **Global deduplication** — each dependency block appears at most once per response. If multiple root groups reference the same dependency, it is emitted **once** with the earliest root group in sort order; its `originator="<rootName>"` attribute reflects the root tripwire whose group first caused this dependency to be emitted (due to global deduplication).
 - **Group construction** — for each matched root tripwire, a *group* is constructed: the dependency closure (DFS order) followed by the root. Groups are ordered by root severity DESC, then root name ASC. Within a group, dependencies appear in DFS traversal order.
 - **Atomic truncation** — when `max_context_length > 0`, the entire group (deps + parent) must fit within the remaining budget. If the group doesn't fit, all of it is suppressed — the parent is never emitted without its dependencies.
-- **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
+- **Rendering** — dependencies are rendered with `origin="dependency" originator="rootName"` attributes. `originator` is the root tripwire whose group first caused this dependency to be emitted. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
 
 ### Conflicts
 
@@ -303,7 +303,7 @@ See ADR-012 for the migration rationale.
 **Delimiter format:**
 
 ```
-<<<TRIPWIRE severity="<level>" name="<name>" [origin="dependency" parent="<parent>"] [tags="<csv>"]>>>
+<<<TRIPWIRE severity="<level>" name="<name>" [origin="dependency" originator="<rootName>"] [tags="<csv>"]>>>
 <context text>
 <<<END_TRIPWIRE>>>
 ```
@@ -313,10 +313,10 @@ See ADR-012 for the migration rationale.
 | `severity` | yes | `info`, `warning`, `high`, `critical` |
 | `name` | yes | tripwire filename without `.yml` |
 | `origin` | only on dependencies | `dependency` |
-| `parent` | only on dependencies | parent tripwire name |
+| `originator` | only on dependencies | root tripwire whose group first caused this dependency to be emitted |
 | `tags` | only if non-empty | comma-separated, no escaping (commas not allowed in tag names) |
 
-File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel. When tripwires are suppressed, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists what was dropped.
+File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel (chosen to be unlikely in real code; if you need unambiguous separation, use `inject_mode: metadata`). When tripwires are suppressed, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists suppressed root groups as `<severity> <name>` lines.
 
 **Injection modes:**
 - `prepend` (default) — context + sentinel + file content in a single response. Universal compatibility; works even when clients flatten multi-block tool outputs.

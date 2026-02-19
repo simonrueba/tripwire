@@ -82,7 +82,7 @@ describe("formatContext", () => {
     expect(result).toContain('name="short"');
     expect(result).toContain("<<<TRIPWIRE_SUPPRESSED");
     expect(result).toContain('count="1"');
-    expect(result).toContain("long (warning)");
+    expect(result).toContain("warning long");
     expect(result).toContain("<<<END_TRIPWIRE_SUPPRESSED>>>");
   });
 
@@ -105,7 +105,7 @@ describe("formatContext", () => {
     );
 
     expect(result).toContain('name="auth"');
-    expect(result).toContain('name="redis-config" origin="dependency" parent="auth"');
+    expect(result).toContain('name="redis-config" origin="dependency" originator="auth"');
     expect(result).toContain("Redis on port 6379");
 
     // Deps must appear before parent
@@ -132,7 +132,7 @@ describe("formatContext", () => {
     expect(result).not.toContain('name="parent"');
     expect(result).not.toContain('name="big-dep"');
     expect(result).toContain("<<<TRIPWIRE_SUPPRESSED");
-    expect(result).toContain("parent (critical)");
+    expect(result).toContain("critical parent");
   });
 
   it("globally dedupes shared dependencies across groups", () => {
@@ -161,9 +161,9 @@ describe("formatContext", () => {
     expect(firstOccurrence).toBeGreaterThan(-1);
     expect(secondOccurrence).toBe(-1); // no second occurrence
 
-    // Should be parented to alpha (the first group)
-    expect(result).toContain('parent="alpha"');
-    expect(result).not.toContain('parent="beta"');
+    // Should be originated from alpha (the first group)
+    expect(result).toContain('originator="alpha"');
+    expect(result).not.toContain('originator="beta"');
   });
 
   it("joins multiple tags with commas", () => {
