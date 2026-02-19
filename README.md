@@ -318,7 +318,7 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 3. Merged tripwires propagate to the whole team on next pull
 4. Expired tripwires get cleaned up with `tripwire lint --prune`
 
-**Security note:** Tripwires influence agent behavior. Treat them like code — review them in PRs, don't auto-merge agent-authored tripwires, and be especially careful with `critical` severity since it shapes how agents interact with sensitive modules.
+**Security note:** Tripwires influence agent behavior. Treat them like code — review them in PRs, don't auto-merge agent-authored tripwires, and be especially careful with `critical` severity since it shapes how agents interact with sensitive modules. See [SECURITY.md](SECURITY.md) for the full threat model, CODEOWNERS setup, and CI recipes.
 
 ### `.gitattributes` (advanced, optional)
 
