@@ -255,8 +255,8 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
 - **Global deduplication** — each dependency block appears at most once per response. If multiple root groups reference the same dependency, it is emitted **once** with the earliest root group in sort order; its `originator="<rootName>"` attribute reflects the root tripwire whose group first caused this dependency to be emitted (due to global deduplication).
 - **Group construction** — for each matched root tripwire, a *group* is constructed: the dependency closure (DFS order) followed by the root. Groups are ordered by root severity DESC, then root name ASC. Within a group, dependencies appear in DFS traversal order.
-- **Atomic truncation** — when `max_context_length > 0`, the entire group (deps + parent) must fit within the remaining budget. If the group doesn't fit, all of it is suppressed — the parent is never emitted without its dependencies.
-- **Rendering** — dependencies are rendered with `origin="dependency" originator="rootName"` attributes. `originator` is the root tripwire whose group first caused this dependency to be emitted. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
+- **Atomic truncation** — when `max_context_length > 0`, the entire group (deps + parent) must fit within the remaining budget. If the group doesn't fit, all of it is suppressed — the parent is never emitted without its dependencies. The group size is computed **after global deduplication**: dependencies already emitted by an earlier group are not re-counted and are not required for group fit.
+- **Rendering** — dependencies are rendered with `origin="dependency" originator="<rootName>"` attributes. `originator` is the root tripwire whose group first caused this dependency to be emitted. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
 
 ### Conflicts
 
@@ -316,7 +316,7 @@ See ADR-012 for the migration rationale.
 | `originator` | only on dependencies | root tripwire whose group first caused this dependency to be emitted |
 | `tags` | only if non-empty | comma-separated, no escaping (commas not allowed in tag names) |
 
-File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel (chosen to be unlikely in real code; if you need unambiguous separation, use `inject_mode: metadata`). When tripwires are suppressed, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists suppressed root groups as `<severity> <name>` lines.
+File content follows after a `<<<TRIPWIRE_FILE_CONTENT>>>` sentinel (chosen to be unlikely in real code; if you need unambiguous separation, use `inject_mode: metadata`). When tripwires are suppressed, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists suppressed root groups as `<severity> <name>` lines and ends with `<<<END_TRIPWIRE_SUPPRESSED>>>`.
 
 **Injection modes:**
 - `prepend` (default) — context + sentinel + file content in a single response. Universal compatibility; works even when clients flatten multi-block tool outputs.
