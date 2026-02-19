@@ -2,7 +2,7 @@
   "mcpServers": {
     "tripwire": {
       "command": "npx",
-      "args": ["@simonrueba/tripwire", "serve", "--project", "."]
+      "args": ["@tripwire-mcp/tripwire", "serve", "--project", "."]
     }
   }
 }

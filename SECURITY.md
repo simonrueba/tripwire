@@ -71,7 +71,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
-      - run: npx -y @simonrueba/tripwire lint --strict
+      - run: npx -y @tripwire-mcp/tripwire lint --strict
 ```
 
 ### Block agent-authored critical tripwires
