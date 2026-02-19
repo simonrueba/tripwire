@@ -138,6 +138,24 @@ context: "Already here"
       ).rejects.toThrow("already exists");
     });
 
+    it("allows overwriting with force flag", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/existing.yml": `
+triggers:
+  - "src/**"
+context: "Old context"
+`,
+      });
+
+      const result = await engine.createTripwire("existing", {
+        triggers: ["src/**"],
+        context: "New context",
+        force: true,
+      });
+
+      expect(result.tripwire.context).toBe("New context");
+    });
+
     it("rejects agent-created tripwires when disabled", async () => {
       const fs = new InMemoryFileSystem({});
       const engine = new TripwireEngine({
@@ -294,6 +312,29 @@ severity: critical
       expect(conflict).toBeDefined();
       expect(conflict?.message).toContain("alpha");
       expect(conflict?.message).toContain("beta");
+    });
+
+    it("warns when multiple critical tripwires exist in strict mode", async () => {
+      const engine = createEngine({
+        "/project/.tripwires/crit-a.yml": `
+triggers:
+  - "src/auth/**"
+context: "Use JWT"
+severity: critical
+`,
+        "/project/.tripwires/crit-b.yml": `
+triggers:
+  - "src/billing/**"
+context: "No hardcoded keys"
+severity: critical
+`,
+      });
+
+      const results = await engine.lint({ strict: true });
+      const conflict = results.find((r) => r.message.includes("critical tripwires"));
+      expect(conflict).toBeDefined();
+      expect(conflict?.message).toContain("crit-a");
+      expect(conflict?.message).toContain("crit-b");
     });
 
     it("warns on large total context size in strict mode", async () => {

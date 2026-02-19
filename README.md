@@ -219,7 +219,7 @@ When multiple tripwires match a path, they are sorted deterministically:
 
 This order determines both the injection sequence and which tripwires survive truncation.
 
-**Severity affects ordering and observability only.** It does not change enforcement behavior, block writes, or gate actions. All matched tripwires are injected regardless of severity — the level is a signal to the agent about how seriously to treat the context.
+**Severity affects ordering and truncation priority.** It does not enforce hard blocking or write gating. All matched tripwires are injected when budget allows — higher severity survives truncation first. The level also signals to the agent how seriously to treat the context.
 
 ### Truncation
 
@@ -284,8 +284,8 @@ Allows agents to author new tripwires. Creates a `.yml` file in `.tripwires/`.
 
 **Behavior:**
 - The `name` is normalized to a canonical filename (`a-z`, `0-9`, hyphens only). `Db_Migration Checklist` becomes `db-migration-checklist.yml`.
-- If a tripwire with the same normalized name already exists, the call **fails** (no silent overwrites). Delete or deactivate the existing tripwire first.
-- `created_by` defaults to `"human"`. Agents should set it to their name.
+- If a tripwire with the same normalized name already exists, the call **fails** (no silent overwrites). Pass `force: true` to overwrite, or delete/deactivate the existing tripwire first.
+- The MCP tool sets `created_by: "agent"` automatically. In hand-written YAML, `created_by` defaults to `"human"`.
 - If `created_by` is not `"human"` and `auto_expire_days > 0`, an `expires` date is automatically added.
 - If `require_learned_from` is `true` (default) and `created_by` is not `"human"`, validation requires the `learned_from` field.
 
@@ -551,12 +551,14 @@ Run `tripwire doctor` first — it checks all components and tells you exactly w
 
 Tripwire ships 4 filesystem tools so it can serve as the **sole FS provider** for MCP clients. Only `read_file` injects context — the other 3 are thin pass-throughs:
 
-| Tool | Behavior |
-|---|---|
-| `read_file` | Checks tripwires, injects context, returns file content |
-| `list_directory` | Lists entries in a directory (pass-through) |
-| `file_stat` | Returns type, size, modified, created (pass-through) |
-| `search_files` | Glob search for files (pass-through) |
+| Tool | Alias | Behavior |
+|---|---|---|
+| `read_file` | — | Checks tripwires, injects context, returns file content |
+| `list_directory` | `list_dir` | Lists entries in a directory (pass-through) |
+| `file_stat` | `stat` | Returns type, size, modified, created (pass-through) |
+| `search_files` | `glob` | Glob search for files (pass-through) |
+
+Aliases maximize compatibility across MCP clients whose system prompts may reference different tool names.
 
 This means you can configure Tripwire as the only filesystem server. Agents discover available tools at connection time via MCP's `tools/list` — if no other server provides filesystem tools, agents must use Tripwire's versions and all reads get context injection automatically.
 

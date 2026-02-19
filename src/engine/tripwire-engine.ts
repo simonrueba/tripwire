@@ -265,6 +265,7 @@ export class TripwireEngine {
       learned_from?: string;
       tags?: string[];
       depends_on?: string[];
+      force?: boolean;
     },
   ): Promise<{ filePath: string; tripwire: TripwireFile }> {
     if (!this.config.allow_agent_create && data.created_by !== "human") {
@@ -279,13 +280,15 @@ export class TripwireEngine {
     const fileName = `${normalized}.yml`;
     const filePath = path.join(this.tripwiresDir, fileName);
 
-    // Prevent silent overwrites
-    const exists = await this.fs.exists(filePath);
-    if (exists) {
-      throw new TripwireError(
-        `Tripwire "${normalized}" already exists at ${fileName}. Delete or deactivate the existing tripwire first.`,
-        TripwireErrorCode.TRIPWIRE_ALREADY_EXISTS,
-      );
+    // Prevent silent overwrites unless force is set
+    if (!data.force) {
+      const exists = await this.fs.exists(filePath);
+      if (exists) {
+        throw new TripwireError(
+          `Tripwire "${normalized}" already exists at ${fileName}. Use force to overwrite, or delete/deactivate the existing tripwire.`,
+          TripwireErrorCode.TRIPWIRE_ALREADY_EXISTS,
+        );
+      }
     }
 
     // Build YAML content (omit defaults for cleaner files)
@@ -462,6 +465,29 @@ export class TripwireEngine {
             level: "warning",
             message: `Identical triggers: ${names.join(", ")} — may inject conflicting context`,
           });
+        }
+      }
+
+      // Warn when multiple critical tripwires exist (high conflict risk)
+      const criticals = activeTripwires.filter((tw) => tw.severity === "critical");
+      if (criticals.length > 1) {
+        results.push({
+          file: ".tripwires/",
+          level: "warning",
+          message: `${criticals.length} critical tripwires: ${criticals.map((t) => t.name).join(", ")} — review for contradictions`,
+        });
+      }
+
+      // Warn if any critical tripwire exceeds max_context_length (would be suppressed)
+      if (this.config.max_context_length > 0) {
+        for (const tw of activeTripwires) {
+          if (tw.severity === "critical" && tw.context.length > this.config.max_context_length) {
+            results.push({
+              file: `${tw.name}.yml`,
+              level: "warning",
+              message: `Critical tripwire "${tw.name}" context (${tw.context.length} chars) exceeds max_context_length (${this.config.max_context_length}) — will be suppressed`,
+            });
+          }
         }
       }
 
