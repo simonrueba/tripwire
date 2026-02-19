@@ -143,7 +143,7 @@ context: |
   Breaking changes here will fail the contract test suite.
 
 severity: high
-created_by: agent:claude
+created_by: agent:claude-code
 learned_from: "Changed a v1 response field, broke 3 downstream consumers"
 ```
 
@@ -231,9 +231,9 @@ When multiple tripwires match a path, they are sorted deterministically:
 1. **Severity descending:** critical (0) > high (1) > warning (2) > info (3)
 2. **Name ascending** (alphabetical) within the same severity
 
-This order determines both the injection sequence and which tripwires survive truncation.
+This order determines the evaluation and emission order of **root tripwire groups**. A group consists of the root tripwire plus its resolved dependencies (see Dependencies). Dependencies do not participate in global severity/name sorting; they are emitted as part of their root group.
 
-**Severity affects ordering and truncation priority.** It does not enforce hard blocking or write gating. All matched tripwires are injected when budget allows — higher severity survives truncation first. The level also signals to the agent how seriously to treat the context.
+**Severity affects ordering and truncation priority.** It does not enforce hard blocking or write gating. All matched groups are injected when budget allows — higher severity survives truncation first. The level also signals to the agent how seriously to treat the context.
 
 ### Truncation
 
@@ -244,7 +244,7 @@ When `max_context_length > 0`, Tripwire enforces a character budget on the injec
 - **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
 - **Budget includes dependencies** — dependency blocks count toward the same budget.
 - **Best-effort in sort order** — groups are attempted in sorted order (root severity DESC, root name ASC). Higher-severity groups are attempted first but there is no hard guarantee they fit. If a single group exceeds the budget, it is suppressed — even if it's critical. **Recommended:** keep `max_context_length: 0` (unlimited, the default) for safety-critical repos where every tripwire must fire.
-- **Suppressed block** — when groups are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists the root tripwire name and severity for each suppressed group. Dependencies suppressed as part of an atomic group are not listed individually — the root name identifies the group.
+- **Suppressed block** — when groups are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists the root tripwire name and severity for each suppressed group. Dependencies suppressed as part of an atomic group are not listed individually — the root name identifies the group. **Suppressed entry format:** `Suppressed: <name> (<severity>), ...` (e.g. `Suppressed: billing-freeze (critical), old-api (warning)`).
 
 ### Dependencies
 
@@ -253,7 +253,7 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Transitive resolution** — dependencies are resolved transitively up to `max_dependency_depth` (default: 5).
 - **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
-- **Global deduplication** — each dependency block appears at most once per response. If multiple groups reference the same dependency, it is emitted with the first group in sort order; later groups omit it.
+- **Global deduplication** — each dependency block appears at most once per response. If multiple root groups reference the same dependency, it is emitted **once** with the earliest root group in sort order; its `parent="<parentName>"` attribute reflects the root tripwire that first caused it to be included.
 - **Group construction** — for each matched root tripwire, a *group* is constructed: the dependency closure (DFS order) followed by the root. Groups are ordered by root severity DESC, then root name ASC. Within a group, dependencies appear in DFS traversal order.
 - **Atomic truncation** — when `max_context_length > 0`, the entire group (deps + parent) must fit within the remaining budget. If the group doesn't fit, all of it is suppressed — the parent is never emitted without its dependencies.
 - **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
@@ -406,7 +406,7 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 3. **Block agent-authored criticals** — fail CI if a diff touches a file with both `created_by: agent:*` and `severity: critical`. CODEOWNER approval is enforced separately via GitHub branch protection ("Require review from Code Owners"):
    ```bash
    BASE=$(git merge-base origin/main HEAD)
-   FILES=$(git diff --name-only "$BASE"...HEAD -- .tripwires/ || true)
+   FILES=$(git diff --name-only --diff-filter=ACMRT "$BASE"...HEAD -- .tripwires/ || true)
    [ -z "$FILES" ] && exit 0
    echo "$FILES" | while read -r f; do
      [ -f "$f" ] || continue
@@ -588,7 +588,7 @@ context: |
   UTF-8 with BOM also works but some older Excel versions on
   Windows JP break. Always test with the fixtures in test/fixtures/jp/.
 severity: warning
-created_by: agent:claude
+created_by: agent:claude-code
 learned_from: "Generated UTF-8 CSVs that showed garbled text for JP users"
 ```
 
