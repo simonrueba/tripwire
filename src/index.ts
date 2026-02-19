@@ -11,6 +11,10 @@ export type {
   MatchResult,
   LintResult,
   TripwireStats,
+  ExplainMatch,
+  ExplainDependency,
+  ExplainSuppressed,
+  ExplainResult,
 } from "./types/index.js";
 export type { TripwireConfig } from "./types/index.js";
 export { TripwireError, TripwireErrorCode } from "./types/index.js";

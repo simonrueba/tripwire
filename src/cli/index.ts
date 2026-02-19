@@ -6,6 +6,7 @@ import { listAction } from "./commands/list.js";
 import { lintAction } from "./commands/lint.js";
 import { statsAction } from "./commands/stats.js";
 import { doctorAction } from "./commands/doctor.js";
+import { explainAction } from "./commands/explain.js";
 
 export function createProgram(): Command {
   const program = new Command()
@@ -56,6 +57,12 @@ export function createProgram(): Command {
     .description("Check that Tripwire enforcement is properly configured")
     .option("--json", "Output as JSON")
     .action(doctorAction);
+
+  program
+    .command("explain <path>")
+    .description("Show exactly what would be injected for a file path and why")
+    .option("--json", "Output as JSON")
+    .action(explainAction);
 
   return program;
 }

@@ -57,3 +57,33 @@ export interface TripwireStats {
   byTag: Record<string, number>;
   byCreator: Record<string, number>;
 }
+
+export interface ExplainMatch {
+  name: string;
+  severity: Severity;
+  matchedGlobs: string[];
+  tags: string[];
+  contextPreview: string;
+}
+
+export interface ExplainDependency {
+  name: string;
+  severity: Severity;
+  resolvedVia: string;
+}
+
+export interface ExplainSuppressed {
+  name: string;
+  severity: Severity;
+  reason: string;
+}
+
+export interface ExplainResult {
+  filePath: string;
+  config: { inject_mode: string; max_context_length: number; enforcement_mode: string };
+  directMatches: ExplainMatch[];
+  resolvedDependencies: ExplainDependency[];
+  suppressed: ExplainSuppressed[];
+  renderedInjection: string;
+  totalContextLength: number;
+}

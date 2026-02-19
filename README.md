@@ -287,6 +287,10 @@ Returns all active tripwires, optionally filtered by path, tag, or severity.
 
 Given a file path, returns which tripwires would fire — useful for agents to preview before reading.
 
+### `explain`
+
+Given a file path, returns a structured breakdown of what would be injected and why: matched tripwires with their globs, resolved dependencies, suppressed entries, active config, and the full rendered injection. Useful for debugging.
+
 ### `deactivate_tripwire`
 
 Soft-disables a tripwire without deleting the file. Adds `active: false` to the YAML.
@@ -303,6 +307,7 @@ tripwire list [--tag <tag>] [--severity <level>]     # List all tripwires
 tripwire lint [--strict] [--prune]                   # Validate all tripwire YAML files
 tripwire stats [--json]                              # Show tripwire coverage and statistics
 tripwire doctor [--json]                             # Check enforcement setup
+tripwire explain <filepath> [--json]                 # Show what would be injected and why
 ```
 
 ---
