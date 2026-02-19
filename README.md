@@ -44,7 +44,7 @@ Add to `.mcp.json` and go:
   "mcpServers": {
     "tripwire": {
       "command": "npx",
-      "args": ["-y", "@simonrueba/tripwire", "serve", "--project", "."]
+      "args": ["-y", "@tripwire-mcp/tripwire", "serve", "--project", "."]
     }
   }
 }
@@ -57,7 +57,7 @@ For Cursor, use `.cursor/mcp.json` with the same config.
 Pin as a dev dependency so everyone gets the same version:
 
 ```bash
-npm install --save-dev @simonrueba/tripwire
+npm install --save-dev @tripwire-mcp/tripwire
 ```
 
 Add scripts to `package.json`:
@@ -88,7 +88,7 @@ Point `.mcp.json` at the local install (no `-y` needed):
 ### Alternative: global install
 
 ```bash
-npm install -g @simonrueba/tripwire
+npm install -g @tripwire-mcp/tripwire
 ```
 
 ### Any MCP-compatible client
