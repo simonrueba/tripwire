@@ -198,21 +198,21 @@ Tripwire uses standard glob syntax:
 | `agent:<client>` | Created via MCP tool (e.g. `agent:mcp`, `agent:claude-code`) |
 | `tool:<name>` | Created by automation (e.g. `tool:ci-generate`) |
 
-`lint --strict` validates the format. The MCP `create_tripwire` tool sets `created_by: agent:mcp` automatically.
+`lint --strict` errors on invalid format (bare `agent` or `tool` without a client name is invalid). The MCP `create_tripwire` tool sets `created_by: agent:mcp` automatically.
 
-**Tags** are a YAML string array. Commas are not allowed inside a tag name. In injection headers, tags are rendered as a comma-separated string: `tags="security,architecture"`.
+**Tags** are a YAML string array. Tag names must match `/^[a-z0-9][a-z0-9-]{0,31}$/` (lowercase alphanumeric + hyphens, max 32 chars). `tripwire lint` errors on invalid tags. In injection headers, tags are rendered as an unescaped comma-separated string: `tags="security,architecture"`. The tight regex makes escaping unnecessary.
 
 ---
 
 ## Behavior Specification
 
-This section documents the exact runtime semantics. Useful for debugging, writing tests, or building alternative clients.
+This section documents the exact runtime semantics. Useful for debugging, writing tests, or building alternative clients. If this document conflicts with implementation, the implementation is the source of truth until the next spec revision.
 
 ### Path matching
 
 Tripwire uses [micromatch](https://github.com/micromatch/micromatch) for glob matching. Supports brace expansion (`{a,b}`) and negation (`!`).
 
-**Case sensitivity:** Matching is case-sensitive by default (`match_case: true`). When `match_case: false`, Tripwire passes `nocase: true` to micromatch, which performs case-insensitive comparison (equivalent to lowercasing both paths and patterns). On case-insensitive filesystems (macOS, Windows), path casing reported by tools may not match trigger casing — set `match_case: false` in `.tripwirerc.yml` to avoid mismatches.
+**Case sensitivity:** Matching is case-sensitive by default (`match_case: true`). When `match_case: false`, matching is case-insensitive (defined as: both the normalized path and trigger patterns are compared without regard to case). On case-insensitive filesystems (macOS, Windows), path casing reported by tools may not match trigger casing — set `match_case: false` in `.tripwirerc.yml` to avoid mismatches.
 
 **Normalization:** Before matching, paths are normalized: backslashes become forward slashes, leading `./` is stripped. Matching uses `dot: true` (dotfiles match `**`).
 
@@ -237,12 +237,14 @@ This order determines both the injection sequence and which tripwires survive tr
 
 ### Truncation
 
-When `max_context_length > 0`, Tripwire enforces a character budget (not tokens — different clients may truncate independently):
+When `max_context_length > 0`, Tripwire enforces a character budget on the injected context (not tokens — different clients may truncate independently). The separator and file content are not part of the budget.
+
+**What counts toward the budget:** the fully rendered injection string — each block's header (`<<<TRIPWIRE ...>>>`), context body, footer (`<<<END_TRIPWIRE>>>`), and trailing newline. The suppression block itself is not counted.
 
 - **Whole-tripwire granularity** — a tripwire block is either fully included or fully omitted. Context is never cut mid-block.
 - **Budget includes dependencies** — dependency blocks count toward the same budget.
-- **Best-effort in sort order** — tripwires are attempted in sorted order (severity DESC, name ASC). Higher-severity tripwires are attempted first but there is no hard guarantee they fit. If a single block exceeds the budget, it is suppressed — even if it's critical. **Recommended:** keep `max_context_length: 0` (unlimited, the default) for safety-critical repos where every tripwire must fire.
-- **Suppressed block** — when tripwires are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists exactly what was dropped, so agents know context was withheld.
+- **Best-effort in sort order** — groups are attempted in sorted order (root severity DESC, root name ASC). Higher-severity groups are attempted first but there is no hard guarantee they fit. If a single group exceeds the budget, it is suppressed — even if it's critical. **Recommended:** keep `max_context_length: 0` (unlimited, the default) for safety-critical repos where every tripwire must fire.
+- **Suppressed block** — when groups are omitted, a `<<<TRIPWIRE_SUPPRESSED count="N" reason="context_budget">>>` block lists the root tripwire name and severity for each suppressed group. Dependencies suppressed as part of an atomic group are not listed individually — the root name identifies the group.
 
 ### Dependencies
 
@@ -251,8 +253,9 @@ Tripwires can declare `depends_on: [name1, name2]` to pull in other tripwires' c
 - **Transitive resolution** — dependencies are resolved transitively up to `max_dependency_depth` (default: 5).
 - **Cycle detection** — a visited-set tracks the walk. If a cycle is detected, a warning is emitted and the cycle edge is skipped.
 - **Missing dependencies** — if a named dependency doesn't exist, a warning is emitted and resolution continues.
-- **Deduplication** — each dependency is included at most once, even if referenced by multiple parents.
-- **Ordering** — dependencies are emitted first (depth-first), then the parent tripwire. The entire group (deps + parent) is treated atomically for truncation: if the group doesn't fit in the budget, all of it is suppressed. Dependencies inherit their parent's position in the output sort order.
+- **Global deduplication** — each dependency block appears at most once per response. If multiple groups reference the same dependency, it is emitted with the first group in sort order; later groups omit it.
+- **Group construction** — for each matched root tripwire, a *group* is constructed: the dependency closure (DFS order) followed by the root. Groups are ordered by root severity DESC, then root name ASC. Within a group, dependencies appear in DFS traversal order.
+- **Atomic truncation** — when `max_context_length > 0`, the entire group (deps + parent) must fit within the remaining budget. If the group doesn't fit, all of it is suppressed — the parent is never emitted without its dependencies.
 - **Rendering** — dependencies are rendered with `origin="dependency" parent="parentName"` attributes. The `name` always matches the tripwire filename (e.g. `name="depName"`), never a synthetic composite.
 
 ### Conflicts
@@ -263,12 +266,12 @@ Tripwire does not attempt to resolve conflicts between contexts. If two tripwire
 - Missing `created_by` field (error)
 - Agent-authored tripwire (`created_by: agent:*`) missing `learned_from` when `require_learned_from` is true (error)
 - Agent-authored tripwire (`created_by: agent:*`) missing `expires` when `auto_expire_days > 0` (error) — prevents handwritten `agent:*` entries from bypassing auto-expiry
-- Invalid tag names containing commas, quotes, or newlines (error)
+- Invalid tag names — must match `/^[a-z0-9][a-z0-9-]{0,31}$/` (error)
 
 `tripwire lint --strict` adds:
 - **Identical trigger sets** (warning) — two tripwires whose sorted trigger arrays are equal (order-insensitive). Exact match, not overlap detection.
-- **Critical overlap** (warning) — enumerates project files (`glob("**")`, filtered by `exclude_paths`, sorted lexicographically, capped at 5000 — `.gitignore` is not honored) and warns if any file matches >1 `critical` tripwire. Reports the specific tripwire names.
-- **`created_by` format** (warning) — must be `human`, `agent:<client>`, or `tool:<name>`.
+- **Critical overlap** (warning) — enumerates project files (glob `**`, files only, filtered by `exclude_paths`, sorted lexicographically, capped at 5000). `.gitignore` is not honored to keep lint results stable across environments; use `exclude_paths` to control scan scope. Warns if any file matches >1 `critical` tripwire. Reports the specific tripwire names.
+- **`created_by` format** (error) — must be `human`, `agent:<client>`, or `tool:<name>`. Bare `agent` or `tool` without a client/tool name is invalid.
 - **Individual context > 4 KB** (warning) — suggests splitting.
 - **Aggregate context > 16 KB** (warning) — total across all tripwires.
 - **Critical tripwire exceeds `max_context_length`** (warning) — will be suppressed at runtime.
@@ -400,18 +403,18 @@ Tripwires are plain files in `.tripwires/`. They diff, merge, and review like co
 
 1. **CODEOWNERS** — protect `.tripwires/**` so changes require review
 2. **CI runs `tripwire lint --strict`** — catches missing `created_by`, format violations, critical overlaps
-3. **Block agent-authored criticals** — fail CI if a diff adds a file with both `created_by: agent:*` and `severity: critical` without CODEOWNER approval:
+3. **Block agent-authored criticals** — fail CI if a diff touches a file with both `created_by: agent:*` and `severity: critical`. CODEOWNER approval is enforced separately via GitHub branch protection ("Require review from Code Owners"):
    ```bash
    BASE=$(git merge-base origin/main HEAD)
-   FILES=$(git diff --name-only "$BASE" -- .tripwires/)
-   if [ -n "$FILES" ]; then
-     echo "$FILES" | while read -r f; do
-       if grep -q 'severity: critical' "$f" && grep -q 'created_by: agent:' "$f"; then
-         echo "FAIL: $f is agent-authored critical — requires CODEOWNER approval"
-         exit 1
-       fi
-     done
-   fi
+   FILES=$(git diff --name-only "$BASE"...HEAD -- .tripwires/ || true)
+   [ -z "$FILES" ] && exit 0
+   echo "$FILES" | while read -r f; do
+     [ -f "$f" ] || continue
+     grep -q '^severity:\s*critical\b' "$f" || continue
+     grep -q '^created_by:\s*agent:' "$f" || continue
+     echo "FAIL: $f is agent-authored critical (block by policy)"
+     exit 1
+   done
    ```
 
 ### Pre-commit hook (optional)

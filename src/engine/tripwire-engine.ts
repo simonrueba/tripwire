@@ -446,11 +446,11 @@ export class TripwireEngine {
       } else {
         const cb = String(rawObj.created_by);
 
-        // Strict: validate created_by format
+        // Strict: validate created_by format (error, not warning — canonical values are required)
         if (options?.strict) {
-          const validFormat = cb === "human" || /^agent(:[a-z0-9-]+)?$/.test(cb) || /^tool(:[a-z0-9-]+)?$/.test(cb);
+          const validFormat = cb === "human" || /^agent:[a-z0-9-]+$/.test(cb) || /^tool:[a-z0-9-]+$/.test(cb);
           if (!validFormat) {
-            results.push({ file: fileName, level: "warning", message: `created_by "${cb}" — expected "human", "agent:<client>", or "tool:<name>"` });
+            results.push({ file: fileName, level: "error", message: `created_by "${cb}" — must be "human", "agent:<client>", or "tool:<name>"` });
           }
         }
 
@@ -465,10 +465,11 @@ export class TripwireEngine {
         }
       }
 
-      // Validate tag names (no commas, quotes, or newlines — rendered as CSV in headers)
+      // Validate tag names — lowercase alphanumeric + hyphens, max 32 chars
+      // Tags are rendered as unescaped CSV in injection headers, so must be unambiguous
       for (const tag of tripwire.tags) {
-        if (/[,"\n\r]/.test(tag)) {
-          results.push({ file: fileName, level: "error", message: `Invalid tag "${tag}" — tags must not contain commas, quotes, or newlines` });
+        if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(tag)) {
+          results.push({ file: fileName, level: "error", message: `Invalid tag "${tag}" — must match /^[a-z0-9][a-z0-9-]{0,31}$/ (lowercase, hyphens, max 32 chars)` });
         }
       }
 
